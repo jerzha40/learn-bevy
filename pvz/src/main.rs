@@ -4,19 +4,18 @@ mod tile;
 use crate::tile::{Occupant, Terrain, Tile, TilePos};
 mod tilemap;
 use crate::tilemap::{COLS, ROWS, TILE, cell_center_world, world_to_cell};
+mod plant;
+use crate::plant::{Plant, PlantKind, plant_fire_system, spawn_plant};
+mod bullet;
+use crate::bullet::{Bullet, bullet_move_system, stats as bullet_stats};
 
 // 玩法参数（你后面可随便调）
 const ZOMBIE_SPAWN_EVERY: f32 = 2.0; // 每 2 秒刷一个
 const ZOMBIE_SPEED: f32 = 60.0; // 僵尸水平速度（像素/秒）
 const ZOMBIE_HP: i32 = 5;
 
-const BULLET_SPEED: f32 = 260.0;
-const PLANT_FIRE_EVERY: f32 = 0.8;
-const BULLET_DAMAGE: i32 = 1;
-
 // 简易碰撞半径（方块也当圆近似）
 const ZOMBIE_RADIUS: f32 = 22.0;
-const BULLET_RADIUS: f32 = 8.0;
 
 fn main() {
     App::new()
@@ -40,8 +39,8 @@ fn main() {
                 click_place_plant,
                 zombie_spawner,
                 zombie_move,
-                plant_fire,
-                bullet_move,
+                plant_fire_system,
+                bullet_move_system,
                 bullet_hit_zombie,
                 cleanup_out_of_bounds,
             ),
@@ -52,21 +51,9 @@ fn main() {
 /* ---------- Components ---------- */
 
 #[derive(Component)]
-struct Plant {
-    row: i32,
-    fire: Timer,
-}
-
-#[derive(Component)]
 struct Zombie {
     row: i32,
     hp: i32,
-}
-
-#[derive(Component)]
-struct Bullet {
-    row: i32,
-    damage: i32,
 }
 
 /* ---------- Resources ---------- */
@@ -161,26 +148,17 @@ fn click_place_plant(
             return;
         }
 
-        // spawn 植物实体，并把这个实体记录到 tile 的 occupant
-        let plant_entity = commands
-            .spawn((
-                Plant {
-                    row: r,
-                    fire: Timer::from_seconds(PLANT_FIRE_EVERY, TimerMode::Repeating),
-                },
-                SpriteBundle {
-                    sprite: Sprite {
-                        color: Color::srgb(0.2, 0.6, 1.0),
-                        custom_size: Some(Vec2::splat(TILE * 0.55)),
-                        ..default()
-                    },
-                    transform: Transform::from_translation(
-                        cell_center_world(r, c) + Vec3::new(0.0, 0.0, 10.0),
-                    ),
-                    ..default()
-                },
-            ))
-            .id();
+        // 先选一种植物：现在先默认 Peashooter（以后你再做 UI/快捷键选择）
+        let kind = PlantKind::Peashooter;
+
+        // 生成植物（返回 entity）
+        let plant_entity = spawn_plant(
+            &mut commands,
+            cell_center_world(r, c) + Vec3::new(0.0, 0.0, 10.0),
+            r,
+            kind,
+            TILE,
+        );
 
         occ.0 = Some(plant_entity);
         info!("Placed plant at cell r={}, c={}", r, c);
@@ -229,61 +207,7 @@ fn zombie_move(time: Res<Time>, mut q: Query<&mut Transform, With<Zombie>>) {
     }
 }
 
-/* ---------- Plant firing ---------- */
-
-fn plant_fire(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut plants: Query<(&mut Plant, &Transform)>,
-    zombies: Query<(&Zombie, &Transform)>,
-) {
-    // 先统计每一行是否有僵尸（有才开火）
-    let mut row_has_zombie = [false; ROWS as usize];
-    for (z, zt) in &zombies {
-        // 只要还在屏幕附近就算威胁
-        if zt.translation.x > -(COLS as f32) * TILE / 2.0 - 100.0 {
-            row_has_zombie[z.row as usize] = true;
-        }
-    }
-
-    for (mut plant, pt) in &mut plants {
-        plant.fire.tick(time.delta());
-        if !plant.fire.just_finished() {
-            continue;
-        }
-
-        if !row_has_zombie[plant.row as usize] {
-            continue;
-        }
-
-        // 发射子弹
-        let spawn = pt.translation + Vec3::new(TILE * 0.35, 0.0, 5.0);
-        commands.spawn((
-            Bullet {
-                row: plant.row,
-                damage: BULLET_DAMAGE,
-            },
-            SpriteBundle {
-                sprite: Sprite {
-                    color: Color::srgb(1.0, 0.9, 0.2),
-                    custom_size: Some(Vec2::splat(16.0)),
-                    ..default()
-                },
-                transform: Transform::from_translation(spawn),
-                ..default()
-            },
-        ));
-    }
-}
-
 /* ---------- Bullets ---------- */
-
-fn bullet_move(time: Res<Time>, mut q: Query<&mut Transform, With<Bullet>>) {
-    let dx = BULLET_SPEED * time.delta_seconds();
-    for mut t in &mut q {
-        t.translation.x += dx;
-    }
-}
 
 fn bullet_hit_zombie(
     mut commands: Commands,
@@ -301,12 +225,13 @@ fn bullet_hit_zombie(
 
             let zpos = zt.translation.truncate();
             let dist2 = bpos.distance_squared(zpos);
-            let hit_r = (BULLET_RADIUS + ZOMBIE_RADIUS).powi(2);
+            let bs = bullet_stats(b.kind);
+
+            let hit_r = (bs.radius + ZOMBIE_RADIUS).powi(2);
 
             if dist2 <= hit_r {
-                // 命中：子弹消失，僵尸扣血
                 commands.entity(b_e).despawn();
-                z.hp -= b.damage;
+                z.hp -= bs.damage;
 
                 if z.hp <= 0 {
                     commands.entity(z_e).despawn();
