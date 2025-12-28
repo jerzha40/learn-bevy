@@ -1,28 +1,62 @@
 use bevy::prelude::*;
 
+/// ===== Tile 相关组件 =====
+
+/// Tile 的网格坐标（第 r 行，第 c 列）
+#[derive(Component, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct TilePos {
+    pub r: i32,
+    pub c: i32,
+}
+
+/// 地形类型（决定能不能种、颜色等）
+#[derive(Component, Copy, Clone)]
+pub enum Terrain {
+    Grass,
+    Water,
+    Stone,
+}
+
+/// Tile 上面“种了什么”
+///
+/// - None  = 空气（没种）
+/// - Some(entity) = 上面有某个实体（植物、墙等）
+#[derive(Component)]
+pub struct Occupant(pub Option<Entity>);
+
+/// Tile 标记组件（tag）
+#[derive(Component)]
+pub struct Tile;
+
+/// ===== 网格参数 =====
+
 /// 网格行数（从上到下 0..ROWS-1）
 pub const ROWS: i32 = 5;
+
 /// 网格列数（从左到右 0..COLS-1）
 pub const COLS: i32 = 9;
+
 /// 单个格子边长（世界坐标单位，像素）
 pub const TILE: f32 = 80.0;
 
-/// 给定 (row, col)，返回该格子的世界坐标中心点（Vec3，z=0）
+/// ===== 坐标换算函数 =====
+
+/// 给定 (row, col)，返回该格子的世界坐标中心点（Vec3，z = 0）
 pub fn cell_center_world(r: i32, c: i32) -> Vec3 {
-    // 左边界（最左侧格子的左边缘）在 -COLS*TILE/2
-    // 所以第 0 列中心是：left + TILE/2
+    // 左边界：最左格子的左边缘
     let left = -(COLS as f32) * TILE / 2.0 + TILE / 2.0;
-    // 顶边界（最上侧格子的上边缘）在 +ROWS*TILE/2
-    // 所以第 0 行中心是：top - TILE/2
+    // 顶边界：最上格子的上边缘
     let top = (ROWS as f32) * TILE / 2.0 - TILE / 2.0;
 
     let x = left + (c as f32) * TILE;
     let y = top - (r as f32) * TILE;
+
     Vec3::new(x, y, 0.0)
 }
 
-/// 给定世界坐标 (x,y)，返回它落在哪个格子 (row,col)
-/// 如果点在草坪外，返回 None
+/// 给定世界坐标 (x, y)，返回它落在哪个格子 (row, col)
+///
+/// - 如果点在草坪外，返回 None
 pub fn world_to_cell(p: Vec2) -> Option<(i32, i32)> {
     let left = -(COLS as f32) * TILE / 2.0;
     let top = (ROWS as f32) * TILE / 2.0;

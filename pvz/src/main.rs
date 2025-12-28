@@ -1,8 +1,9 @@
 use bevy::prelude::*;
-use std::collections::HashSet;
 
 mod tile;
-use crate::tile::{COLS, ROWS, TILE, cell_center_world, world_to_cell};
+use crate::tile::{
+    COLS, Occupant, ROWS, TILE, Terrain, Tile, TilePos, cell_center_world, world_to_cell,
+};
 
 // 玩法参数（你后面可随便调）
 const ZOMBIE_SPAWN_EVERY: f32 = 2.0; // 每 2 秒刷一个
@@ -20,7 +21,6 @@ const BULLET_RADIUS: f32 = 8.0;
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.06, 0.08, 0.06)))
-        .insert_resource(OccupiedCells::default())
         .insert_resource(ZombieSpawnTimer(Timer::from_seconds(
             ZOMBIE_SPAWN_EVERY,
             TimerMode::Repeating,
@@ -71,9 +71,6 @@ struct Bullet {
 
 /* ---------- Resources ---------- */
 
-#[derive(Resource, Default)]
-struct OccupiedCells(HashSet<(i32, i32)>);
-
 #[derive(Resource)]
 struct ZombieSpawnTimer(Timer);
 
@@ -92,15 +89,21 @@ fn setup(mut commands: Commands) {
                 Color::srgb(0.16, 0.40, 0.16)
             };
 
-            commands.spawn(SpriteBundle {
-                sprite: Sprite {
-                    color,
-                    custom_size: Some(Vec2::splat(TILE - 4.0)),
+            commands.spawn((
+                Tile,
+                TilePos { r, c },
+                Terrain::Grass,
+                Occupant(None),
+                SpriteBundle {
+                    sprite: Sprite {
+                        color,
+                        custom_size: Some(Vec2::splat(TILE - 4.0)),
+                        ..default()
+                    },
+                    transform: Transform::from_translation(pos),
                     ..default()
                 },
-                transform: Transform::from_translation(pos),
-                ..default()
-            });
+            ));
         }
     }
 }
@@ -112,7 +115,7 @@ fn click_place_plant(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     cam_q: Query<(&Camera, &GlobalTransform)>,
-    mut occupied: ResMut<OccupiedCells>,
+    mut tiles: Query<(&TilePos, &Terrain, &mut Occupant), With<Tile>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -132,28 +135,47 @@ fn click_place_plant(
         return;
     };
 
-    if occupied.0.contains(&(r, c)) {
+    // 找到被点中的 Tile（通过 r,c 匹配）
+    for (pos, terrain, mut occ) in &mut tiles {
+        if pos.r != r || pos.c != c {
+            continue;
+        }
+
+        // 只有草地能种（以后你可以扩展 Water/Stone）
+        if !matches!(*terrain, Terrain::Grass) {
+            return;
+        }
+
+        // occ.0 == None 表示“空气”，可以种
+        if occ.0.is_some() {
+            return;
+        }
+
+        // spawn 植物实体，并把这个实体记录到 tile 的 occupant
+        let plant_entity = commands
+            .spawn((
+                Plant {
+                    row: r,
+                    fire: Timer::from_seconds(PLANT_FIRE_EVERY, TimerMode::Repeating),
+                },
+                SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::srgb(0.2, 0.6, 1.0),
+                        custom_size: Some(Vec2::splat(TILE * 0.55)),
+                        ..default()
+                    },
+                    transform: Transform::from_translation(
+                        cell_center_world(r, c) + Vec3::new(0.0, 0.0, 10.0),
+                    ),
+                    ..default()
+                },
+            ))
+            .id();
+
+        occ.0 = Some(plant_entity);
+        info!("Placed plant at cell r={}, c={}", r, c);
         return;
     }
-    occupied.0.insert((r, c));
-
-    commands.spawn((
-        Plant {
-            row: r,
-            fire: Timer::from_seconds(PLANT_FIRE_EVERY, TimerMode::Repeating),
-        },
-        SpriteBundle {
-            sprite: Sprite {
-                color: Color::srgb(0.2, 0.6, 1.0),
-                custom_size: Some(Vec2::splat(TILE * 0.55)),
-                ..default()
-            },
-            transform: Transform::from_translation(
-                cell_center_world(r, c) + Vec3::new(0.0, 0.0, 10.0),
-            ),
-            ..default()
-        },
-    ));
 
     info!("Placed plant at cell r={}, c={}", r, c);
 }
