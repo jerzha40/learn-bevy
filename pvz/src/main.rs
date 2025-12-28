@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
 mod tile;
-use crate::tile::{
-    COLS, Occupant, ROWS, TILE, Terrain, Tile, TilePos, cell_center_world, world_to_cell,
-};
+use crate::tile::{Occupant, Terrain, Tile, TilePos};
+mod tilemap;
+use crate::tilemap::{COLS, ROWS, TILE, cell_center_world, world_to_cell};
 
 // 玩法参数（你后面可随便调）
 const ZOMBIE_SPAWN_EVERY: f32 = 2.0; // 每 2 秒刷一个
@@ -83,17 +83,27 @@ fn setup(mut commands: Commands) {
     for r in 0..ROWS {
         for c in 0..COLS {
             let pos = cell_center_world(r, c);
-            let color = if (r + c) % 2 == 0 {
-                Color::srgb(0.18, 0.45, 0.18)
-            } else {
-                Color::srgb(0.16, 0.40, 0.16)
+
+            // 先都当草地（你以后可以把某些格子改成 Water/Stone）
+            let terrain = Terrain::Grass;
+
+            let color = match terrain {
+                Terrain::Grass => {
+                    if (r + c) % 2 == 0 {
+                        Color::srgb(0.18, 0.45, 0.18)
+                    } else {
+                        Color::srgb(0.16, 0.40, 0.16)
+                    }
+                }
+                Terrain::Water => Color::srgb(0.10, 0.25, 0.60),
+                Terrain::Stone => Color::srgb(0.35, 0.35, 0.35),
             };
 
             commands.spawn((
                 Tile,
                 TilePos { r, c },
-                Terrain::Grass,
-                Occupant(None),
+                terrain,
+                Occupant(None), // None = 空气
                 SpriteBundle {
                     sprite: Sprite {
                         color,
@@ -176,8 +186,6 @@ fn click_place_plant(
         info!("Placed plant at cell r={}, c={}", r, c);
         return;
     }
-
-    info!("Placed plant at cell r={}, c={}", r, c);
 }
 
 /* ---------- Zombies ---------- */
