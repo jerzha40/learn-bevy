@@ -1,9 +1,8 @@
 use bevy::prelude::*;
 use std::collections::HashSet;
 
-const ROWS: i32 = 5;
-const COLS: i32 = 9;
-const TILE: f32 = 80.0;
+mod tile;
+use crate::tile::{COLS, ROWS, TILE, cell_center_world, world_to_cell};
 
 // 玩法参数（你后面可随便调）
 const ZOMBIE_SPAWN_EVERY: f32 = 2.0; // 每 2 秒刷一个
@@ -311,30 +310,5 @@ fn cleanup_out_of_bounds(
             info!("A zombie reached the house! (lose condition)");
             commands.entity(e).despawn();
         }
-    }
-}
-
-/* ---------- Grid helpers ---------- */
-
-fn cell_center_world(r: i32, c: i32) -> Vec3 {
-    let left = -(COLS as f32) * TILE / 2.0 + TILE / 2.0;
-    let top = (ROWS as f32) * TILE / 2.0 - TILE / 2.0;
-
-    let x = left + (c as f32) * TILE;
-    let y = top - (r as f32) * TILE;
-    Vec3::new(x, y, 0.0)
-}
-
-fn world_to_cell(p: Vec2) -> Option<(i32, i32)> {
-    let left = -(COLS as f32) * TILE / 2.0;
-    let top = (ROWS as f32) * TILE / 2.0;
-
-    let c = ((p.x - left) / TILE).floor() as i32;
-    let r = ((top - p.y) / TILE).floor() as i32;
-
-    if r >= 0 && r < ROWS && c >= 0 && c < COLS {
-        Some((r, c))
-    } else {
-        None
     }
 }
