@@ -3,6 +3,10 @@ use bevy::prelude::*;
 use bevy::sprite::MaterialMesh2dBundle;
 use bevy::window::PrimaryWindow;
 
+pub const TANK_BODY_RADIUS_BM: f32 = 0.35;
+pub const TANK_TURRET_BARREL_LENGTH_BM: f32 = 0.6;
+pub const TANK_TURRET_BARREL_THICKNESS_BM: f32 = 0.14;
+
 pub struct TankPlugin;
 
 impl Plugin for TankPlugin {
@@ -34,7 +38,7 @@ impl Default for TankStats {
     fn default() -> Self {
         Self {
             hp: 100.0,
-            move_speed: 180.0,
+            move_speed: 2.4,
             turn_speed: 3.2,
         }
     }
@@ -73,7 +77,7 @@ fn assemble_tank_visuals(
     tanks: Query<Entity, (With<Tank>, Without<TankVisualBuilt>)>,
 ) {
     for tank_entity in &tanks {
-        let body_mesh = meshes.add(Mesh::from(Circle::new(24.0)));
+        let body_mesh = meshes.add(Mesh::from(Circle::new(TANK_BODY_RADIUS_BM)));
         let body_material = materials.add(ColorMaterial::from(Color::srgb(0.25, 0.72, 0.32)));
 
         let body_entity = commands
@@ -101,10 +105,13 @@ fn assemble_tank_visuals(
                 SpriteBundle {
                     sprite: Sprite {
                         color: Color::srgb(0.16, 0.35, 0.2),
-                        custom_size: Some(Vec2::new(30.0, 10.0)),
+                        custom_size: Some(Vec2::new(
+                            TANK_TURRET_BARREL_LENGTH_BM,
+                            TANK_TURRET_BARREL_THICKNESS_BM,
+                        )),
                         ..default()
                     },
-                    transform: Transform::from_xyz(15.0, 0.0, 0.0),
+                    transform: Transform::from_xyz(TANK_TURRET_BARREL_LENGTH_BM * 0.5, 0.0, 0.0),
                     ..default()
                 },
             ))

@@ -3,7 +3,9 @@ use bevy::prelude::*;
 use bevy::sprite::MaterialMesh2dBundle;
 
 use crate::projectile::Projectile;
-use crate::tank::{Tank, TankStats, TankTurretVisual};
+use crate::tank::{
+    Tank, TankStats, TankTurretVisual, TANK_BODY_RADIUS_BM, TANK_TURRET_BARREL_LENGTH_BM,
+};
 
 pub struct BaseProjectilePlugin;
 
@@ -34,10 +36,10 @@ pub struct BaseProjectile {
 impl BaseProjectile {
     pub fn new(direction: Vec2, owner: Entity) -> Self {
         Self {
-            speed: 520.0,
-            remaining_distance: 600.0,
+            speed: 8.0,
+            remaining_distance: 8.0,
             damage: 12.0,
-            radius: 4.0,
+            radius: 0.05,
             direction,
             owner,
         }
@@ -80,11 +82,13 @@ fn fire_base_projectile(
         return;
     }
 
-    let spawn_position = turret_world.translation.truncate() + forward * 32.0;
+    let projectile = BaseProjectile::new(forward, owner_entity);
+    let spawn_offset = TANK_TURRET_BARREL_LENGTH_BM + projectile.radius;
+    let spawn_position = turret_world.translation.truncate() + forward * spawn_offset;
 
     commands.spawn(BaseProjectileBundle {
         projectile: Projectile,
-        base_projectile: BaseProjectile::new(forward, owner_entity),
+        base_projectile: projectile,
         spatial: SpatialBundle::from_transform(Transform::from_xyz(
             spawn_position.x,
             spawn_position.y,
@@ -97,10 +101,13 @@ fn assemble_base_projectile_visuals(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    projectiles: Query<Entity, (With<BaseProjectile>, Without<BaseProjectileVisualBuilt>)>,
+    projectiles: Query<
+        (Entity, &BaseProjectile),
+        (With<BaseProjectile>, Without<BaseProjectileVisualBuilt>),
+    >,
 ) {
-    for projectile_entity in &projectiles {
-        let bullet_mesh = meshes.add(Mesh::from(Circle::new(4.0)));
+    for (projectile_entity, projectile) in &projectiles {
+        let bullet_mesh = meshes.add(Mesh::from(Circle::new(projectile.radius)));
         let bullet_material = materials.add(ColorMaterial::from(Color::srgb(0.96, 0.9, 0.2)));
 
         let visual_entity = commands
@@ -150,7 +157,7 @@ fn hit_tanks_with_base_projectiles(
             }
 
             let tank_position = tank_transform.translation.truncate();
-            let hit_distance = projectile.radius + 24.0;
+            let hit_distance = projectile.radius + TANK_BODY_RADIUS_BM;
             let delta = projectile_position - tank_position;
 
             if delta.length_squared() <= hit_distance * hit_distance {
