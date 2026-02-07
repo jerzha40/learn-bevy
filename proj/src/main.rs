@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+mod tank;
 
 fn main() {
     App::new()
@@ -10,6 +11,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(tank::TankPlugin)
         .add_systems(Startup, setup_camera)
         .run();
 }
