@@ -73,7 +73,9 @@ fn fire_base_projectile(
     }
 
     let turret_world = turret_transform.compute_transform();
-    let forward = (turret_world.rotation * Vec3::X).truncate().normalize_or_zero();
+    let forward = (turret_world.rotation * Vec3::X)
+        .truncate()
+        .normalize_or_zero();
     if forward == Vec2::ZERO {
         return;
     }
