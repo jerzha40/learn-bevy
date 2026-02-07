@@ -21,6 +21,16 @@ use crate::windowblob::{
 pub const SAVE_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_AUTOSAVE_SECONDS: f32 = 5.0;
 
+pub fn load_main_blob_prefab_for_startup() -> WindowBlobPrefab {
+    let save_config = SaveConfig::default();
+    let (loaded_blob, _) = load_main_blob_save_or_default(&save_config);
+    WindowBlobPrefab {
+        save_file: loaded_blob.blob.save_file,
+        size_bm: Vec2::new(loaded_blob.blob.size_bm[0], loaded_blob.blob.size_bm[1]),
+        pixels_per_bm: loaded_blob.blob.pixels_per_bm,
+    }
+}
+
 pub struct SavePlugin;
 
 impl Plugin for SavePlugin {
@@ -190,39 +200,7 @@ fn load_main_blob_or_bootstrap(
     };
 
     let save_path = save_config.save_path_for(MAIN_BLOB_SAVE_FILE);
-
-    let (loaded_blob, should_bootstrap) = if save_path.exists() {
-        let parsed_save = load_blob_from_disk(&save_path).unwrap_or_else(|err| {
-            panic!("Failed to load save file {}: {err}", save_path.display());
-        });
-
-        if parsed_save.schema_version != SAVE_SCHEMA_VERSION {
-            panic!(
-                "Unsupported save schema_version {} in {}. Expected {}.",
-                parsed_save.schema_version,
-                save_path.display(),
-                SAVE_SCHEMA_VERSION
-            );
-        }
-
-        (parsed_save, false)
-    } else {
-        let main_prefab = WindowBlobPrefab::main_blob();
-        (
-            BlobSaveFileV1 {
-                schema_version: SAVE_SCHEMA_VERSION,
-                blob: BlobMetaV1 {
-                    save_file: main_prefab.save_file.clone(),
-                    size_bm: [main_prefab.size_bm.x, main_prefab.size_bm.y],
-                    pixels_per_bm: main_prefab.pixels_per_bm,
-                },
-                tanks: Vec::new(),
-                projectiles: Vec::new(),
-                portals: Vec::new(),
-            },
-            true,
-        )
-    };
+    let (loaded_blob, should_bootstrap) = load_main_blob_save_or_default(&save_config);
 
     let main_blob_prefab = WindowBlobPrefab {
         save_file: loaded_blob.blob.save_file.clone(),
@@ -259,6 +237,42 @@ fn load_main_blob_or_bootstrap(
     } else {
         info!("Loaded save from {}", save_path.display());
     }
+}
+
+fn load_main_blob_save_or_default(save_config: &SaveConfig) -> (BlobSaveFileV1, bool) {
+    let save_path = save_config.save_path_for(MAIN_BLOB_SAVE_FILE);
+    if save_path.exists() {
+        let parsed_save = load_blob_from_disk(&save_path).unwrap_or_else(|err| {
+            panic!("Failed to load save file {}: {err}", save_path.display());
+        });
+
+        if parsed_save.schema_version != SAVE_SCHEMA_VERSION {
+            panic!(
+                "Unsupported save schema_version {} in {}. Expected {}.",
+                parsed_save.schema_version,
+                save_path.display(),
+                SAVE_SCHEMA_VERSION
+            );
+        }
+
+        return (parsed_save, false);
+    }
+
+    let main_prefab = WindowBlobPrefab::main_blob();
+    (
+        BlobSaveFileV1 {
+            schema_version: SAVE_SCHEMA_VERSION,
+            blob: BlobMetaV1 {
+                save_file: main_prefab.save_file.clone(),
+                size_bm: [main_prefab.size_bm.x, main_prefab.size_bm.y],
+                pixels_per_bm: main_prefab.pixels_per_bm,
+            },
+            tanks: Vec::new(),
+            projectiles: Vec::new(),
+            portals: Vec::new(),
+        },
+        true,
+    )
 }
 
 fn assign_persistent_ids(

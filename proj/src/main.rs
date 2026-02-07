@@ -8,20 +8,17 @@ mod tank;
 mod windowblob;
 
 const BASE_WINDOW_TITLE: &str = windowblob::BASE_WINDOW_TITLE;
-const BLOB_PIXELS_PER_BM: f32 = windowblob::DEFAULT_PIXELS_PER_BM;
 
 fn main() {
+    let startup_prefab = save::load_main_blob_prefab_for_startup();
+    let primary_window =
+        windowblob::WindowBlobWindowBundle::from_prefab(windowblob::MAIN_BLOB_INSTANCE_ID, &startup_prefab).window;
+
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: BASE_WINDOW_TITLE.to_string(),
-                resolution: (
-                    windowblob::MAIN_BLOB_SIZE_BM.x * BLOB_PIXELS_PER_BM,
-                    windowblob::MAIN_BLOB_SIZE_BM.y * BLOB_PIXELS_PER_BM,
-                )
-                    .into(),
                 present_mode: PresentMode::AutoNoVsync,
-                ..default()
+                ..primary_window
             }),
             close_when_requested: false,
             exit_condition: ExitCondition::DontExit,
