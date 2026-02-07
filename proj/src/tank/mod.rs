@@ -6,12 +6,13 @@ use bevy::window::PrimaryWindow;
 pub const TANK_BODY_RADIUS_BM: f32 = 0.35;
 pub const TANK_TURRET_BARREL_LENGTH_BM: f32 = 0.6;
 pub const TANK_TURRET_BARREL_THICKNESS_BM: f32 = 0.14;
+pub const PLAYER_FACTION_ID: u8 = 1;
 
 pub struct TankPlugin;
 
 impl Plugin for TankPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_test_tank)
+        app.add_systems(Startup, spawn_default_tank_if_empty)
             .add_systems(
                 Update,
                 (
@@ -26,6 +27,15 @@ impl Plugin for TankPlugin {
 
 #[derive(Component, Debug, Default)]
 pub struct Tank;
+
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FactionId(pub u8);
+
+impl Default for FactionId {
+    fn default() -> Self {
+        Self(PLAYER_FACTION_ID)
+    }
+}
 
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TankStats {
@@ -59,12 +69,18 @@ pub struct TankVisualBuilt;
 #[derive(Bundle, Default)]
 pub struct TankBundle {
     pub tank: Tank,
+    pub faction: FactionId,
     pub stats: TankStats,
     pub spatial: SpatialBundle,
 }
 
-fn spawn_test_tank(mut commands: Commands) {
+fn spawn_default_tank_if_empty(mut commands: Commands, existing_tanks: Query<Entity, With<Tank>>) {
+    if !existing_tanks.is_empty() {
+        return;
+    }
+
     commands.spawn(TankBundle {
+        faction: FactionId(PLAYER_FACTION_ID),
         spatial: SpatialBundle::from_transform(Transform::from_xyz(0.0, 0.0, 0.0)),
         ..default()
     });

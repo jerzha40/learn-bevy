@@ -1,7 +1,8 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use bevy::window::{PresentMode, PrimaryWindow};
+use bevy::window::{ExitCondition, PresentMode, PrimaryWindow};
 mod projectile;
+mod save;
 mod tank;
 mod windowblob;
 
@@ -21,6 +22,8 @@ fn main() {
                 present_mode: PresentMode::AutoNoVsync,
                 ..default()
             }),
+            close_when_requested: false,
+            exit_condition: ExitCondition::DontExit,
             ..default()
         }))
         .add_plugins(FrameTimeDiagnosticsPlugin)
@@ -28,6 +31,7 @@ fn main() {
             pixels_per_bm: BLOB_PIXELS_PER_BM,
         })
         .add_plugins(windowblob::WindowBlobPlugin)
+        .add_plugins(save::SavePlugin)
         .add_plugins(tank::TankPlugin)
         .add_plugins(projectile::ProjectilePlugin)
         .add_systems(Startup, setup_camera)

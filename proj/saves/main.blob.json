@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "blob": {
+    "save_file": "main.blob.json",
+    "size_bm": [
+      10.0,
+      10.0
+    ],
+    "pixels_per_bm": 72.0
+  },
+  "tanks": [
+    {
+      "id": 1,
+      "position_bm": [
+        0.0,
+        0.0
+      ],
+      "rotation_rad": -0.0,
+      "hp": 100.0,
+      "move_speed": 2.4,
+      "turn_speed": 3.2,
+      "faction_id": 1
+    }
+  ],
+  "projectiles": []
+}

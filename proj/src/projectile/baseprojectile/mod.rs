@@ -4,8 +4,10 @@ use bevy::sprite::MaterialMesh2dBundle;
 
 use crate::projectile::Projectile;
 use crate::tank::{
-    Tank, TankStats, TankTurretVisual, TANK_BODY_RADIUS_BM, TANK_TURRET_BARREL_LENGTH_BM,
+    FactionId, Tank, TankStats, TankTurretVisual, TANK_BODY_RADIUS_BM, TANK_TURRET_BARREL_LENGTH_BM,
 };
+
+pub const DEFAULT_TARGET_FACTION_ID: u8 = 2;
 
 pub struct BaseProjectilePlugin;
 
@@ -30,18 +32,18 @@ pub struct BaseProjectile {
     pub damage: f32,
     pub radius: f32,
     pub direction: Vec2,
-    pub owner: Entity,
+    pub target_faction_id: u8,
 }
 
 impl BaseProjectile {
-    pub fn new(direction: Vec2, owner: Entity) -> Self {
+    pub fn new(direction: Vec2, target_faction_id: u8) -> Self {
         Self {
             speed: 8.0,
             remaining_distance: 8.0,
             damage: 12.0,
             radius: 0.05,
             direction,
-            owner,
+            target_faction_id,
         }
     }
 }
@@ -60,19 +62,14 @@ fn fire_base_projectile(
     mouse_button: Res<ButtonInput<MouseButton>>,
     mut commands: Commands,
     turrets: Query<(&Parent, &GlobalTransform), With<TankTurretVisual>>,
-    tanks: Query<Entity, With<Tank>>,
 ) {
     if !mouse_button.just_pressed(MouseButton::Left) {
         return;
     }
 
-    let Some((owner, turret_transform)) = turrets.iter().next() else {
+    let Some((_, turret_transform)) = turrets.iter().next() else {
         return;
     };
-    let owner_entity = owner.get();
-    if !tanks.contains(owner_entity) {
-        return;
-    }
 
     let turret_world = turret_transform.compute_transform();
     let forward = (turret_world.rotation * Vec3::X)
@@ -82,7 +79,7 @@ fn fire_base_projectile(
         return;
     }
 
-    let projectile = BaseProjectile::new(forward, owner_entity);
+    let projectile = BaseProjectile::new(forward, DEFAULT_TARGET_FACTION_ID);
     let spawn_offset = TANK_TURRET_BARREL_LENGTH_BM + projectile.radius;
     let spawn_position = turret_world.translation.truncate() + forward * spawn_offset;
 
@@ -144,15 +141,15 @@ fn move_base_projectiles(
 
 fn hit_tanks_with_base_projectiles(
     mut commands: Commands,
-    mut tanks: Query<(Entity, &Transform, &mut TankStats), With<Tank>>,
+    mut tanks: Query<(Entity, &Transform, &FactionId, &mut TankStats), With<Tank>>,
     projectiles: Query<(Entity, &Transform, &BaseProjectile), With<Projectile>>,
 ) {
     for (projectile_entity, projectile_transform, projectile) in &projectiles {
         let projectile_position = projectile_transform.translation.truncate();
         let mut has_hit = false;
 
-        for (tank_entity, tank_transform, mut tank_stats) in &mut tanks {
-            if tank_entity == projectile.owner {
+        for (_, tank_transform, tank_faction, mut tank_stats) in &mut tanks {
+            if tank_faction.0 != projectile.target_faction_id {
                 continue;
             }
 
