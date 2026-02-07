@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::render::camera::{OrthographicProjection, ScalingMode};
+use bevy::window::PresentMode;
 
 use crate::tank::{Tank, TANK_BODY_RADIUS_BM};
 
@@ -7,6 +8,7 @@ pub const MAIN_BLOB_SAVE_FILE: &str = "main.blob.json";
 pub const MAIN_BLOB_SIZE_BM: Vec2 = Vec2::new(10.0, 10.0);
 pub const DEFAULT_PIXELS_PER_BM: f32 = 72.0;
 pub const MAIN_BLOB_INSTANCE_ID: u32 = 1;
+pub const BASE_WINDOW_TITLE: &str = "Tank Test Window";
 
 pub struct WindowBlobPlugin;
 
@@ -35,6 +37,45 @@ pub struct BlobWindow {
     pub pixels_per_bm: f32,
 }
 
+#[derive(Debug, Clone)]
+pub struct WindowBlobPrefab {
+    pub save_file: String,
+    pub size_bm: Vec2,
+    pub pixels_per_bm: f32,
+}
+
+impl WindowBlobPrefab {
+    pub fn main_blob() -> Self {
+        Self {
+            save_file: MAIN_BLOB_SAVE_FILE.to_string(),
+            size_bm: MAIN_BLOB_SIZE_BM,
+            pixels_per_bm: DEFAULT_PIXELS_PER_BM,
+        }
+    }
+}
+
+#[derive(Bundle)]
+pub struct WindowBlobWindowBundle {
+    pub window: Window,
+    pub blob_window: BlobWindow,
+}
+
+impl WindowBlobWindowBundle {
+    pub fn from_prefab(instance_id: u32, prefab: &WindowBlobPrefab) -> Self {
+        let width = prefab.size_bm.x * prefab.pixels_per_bm;
+        let height = prefab.size_bm.y * prefab.pixels_per_bm;
+        Self {
+            window: Window {
+                title: blob_window_title(&prefab.save_file),
+                resolution: (width, height).into(),
+                present_mode: PresentMode::AutoNoVsync,
+                ..default()
+            },
+            blob_window: BlobWindow::from_prefab(instance_id, prefab),
+        }
+    }
+}
+
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlobInstanceId(pub u32);
 
@@ -58,6 +99,17 @@ impl Default for NextBlobInstanceId {
     }
 }
 
+impl BlobWindow {
+    pub fn from_prefab(instance_id: u32, prefab: &WindowBlobPrefab) -> Self {
+        Self {
+            instance_id,
+            save_file: prefab.save_file.clone(),
+            size_bm: prefab.size_bm,
+            pixels_per_bm: prefab.pixels_per_bm,
+        }
+    }
+}
+
 impl Default for BlobInstanceId {
     fn default() -> Self {
         Self(MAIN_BLOB_INSTANCE_ID)
@@ -72,6 +124,10 @@ impl Default for BlobRenderLayer {
 
 pub fn blob_render_layer(instance_id: u32) -> usize {
     (((instance_id.saturating_sub(1)) % 31) + 1) as usize
+}
+
+pub fn blob_window_title(save_file: &str) -> String {
+    format!("{BASE_WINDOW_TITLE} [{save_file}]")
 }
 
 fn update_focused_blob_instance(

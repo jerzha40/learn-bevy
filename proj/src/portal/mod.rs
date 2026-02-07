@@ -14,8 +14,9 @@ use crate::windowblob::{
     FocusedBlobInstance, MAIN_BLOB_INSTANCE_ID, MAIN_BLOB_SIZE_BM,
 };
 
-pub const PORTAL_INTERACT_DIAMETER_BM: f32 = 2.0;
+pub const DEFAULT_PORTAL_INTERACT_DIAMETER_BM: f32 = 2.0;
 pub const DEFAULT_PORTAL_RADIUS_BM: f32 = 0.45;
+pub const DEFAULT_PORTAL_COLOR_RGBA: [f32; 4] = [0.22, 0.58, 0.95, 1.0];
 pub const MAIN_PORTAL_ID: u64 = 1001;
 pub const NEWLAND_RETURN_PORTAL_ID: u64 = 2001;
 pub const NEWLAND_BLOB_SAVE_FILE: &str = "newland.blob.json";
@@ -43,6 +44,8 @@ pub struct Portal {
     pub target_blob_save_file: String,
     pub target_portal_id: u64,
     pub radius_bm: f32,
+    pub interact_diameter_bm: f32,
+    pub color_rgba: [f32; 4],
 }
 
 impl Portal {
@@ -51,7 +54,18 @@ impl Portal {
             target_blob_save_file: target_blob_save_file.into(),
             target_portal_id,
             radius_bm: DEFAULT_PORTAL_RADIUS_BM,
+            interact_diameter_bm: DEFAULT_PORTAL_INTERACT_DIAMETER_BM,
+            color_rgba: DEFAULT_PORTAL_COLOR_RGBA,
         }
+    }
+
+    fn color(&self) -> Color {
+        Color::srgba(
+            self.color_rgba[0],
+            self.color_rgba[1],
+            self.color_rgba[2],
+            self.color_rgba[3],
+        )
     }
 }
 
@@ -98,7 +112,7 @@ fn assemble_portal_visuals(
                 RenderLayers::layer(blob_layer.0),
                 MaterialMesh2dBundle {
                     mesh: meshes.add(Mesh::from(Circle::new(portal.radius_bm))).into(),
-                    material: materials.add(ColorMaterial::from(Color::srgb(0.22, 0.58, 0.95))),
+                    material: materials.add(ColorMaterial::from(portal.color())),
                     transform: Transform::from_xyz(0.0, 0.0, 0.5),
                     ..default()
                 },
@@ -113,7 +127,12 @@ fn assemble_portal_visuals(
                 RenderLayers::layer(blob_layer.0),
                 SpriteBundle {
                     sprite: Sprite {
-                        color: Color::srgba(1.0, 0.95, 0.45, 0.35),
+                        color: Color::srgba(
+                            portal.color_rgba[0].clamp(0.0, 1.0),
+                            portal.color_rgba[1].clamp(0.0, 1.0),
+                            portal.color_rgba[2].clamp(0.0, 1.0),
+                            0.35,
+                        ),
                         custom_size: Some(Vec2::splat(portal.radius_bm * 2.4)),
                         ..default()
                     },
@@ -247,7 +266,7 @@ fn activate_hovered_portal(
     };
 
     let hovered_position = hovered_transform.translation.truncate();
-    let activation_radius = PORTAL_INTERACT_DIAMETER_BM * 0.5;
+    let activation_radius = hovered_portal.interact_diameter_bm * 0.5;
     let mut selected_tank: Option<(Entity, TravelerTankState)> = None;
 
     for (tank_entity, tank_transform, tank_stats, tank_faction, tank_blob) in tanks.p0().iter() {
@@ -384,6 +403,20 @@ fn ensure_target_portal_exists(
             portal.target_portal_id = source_portal_id;
             changed = true;
         }
+        if (portal.radius_bm - source_portal.radius_bm).abs() > f32::EPSILON {
+            portal.radius_bm = source_portal.radius_bm;
+            changed = true;
+        }
+        if (portal.interact_diameter_bm - source_portal.interact_diameter_bm).abs()
+            > f32::EPSILON
+        {
+            portal.interact_diameter_bm = source_portal.interact_diameter_bm;
+            changed = true;
+        }
+        if portal.color_rgba != source_portal.color_rgba {
+            portal.color_rgba = source_portal.color_rgba;
+            changed = true;
+        }
     }
 
     if !has_target_portal {
@@ -393,6 +426,8 @@ fn ensure_target_portal_exists(
             target_blob_save_file: source_blob_window.save_file.clone(),
             target_portal_id: source_portal_id,
             radius_bm: source_portal.radius_bm,
+            interact_diameter_bm: source_portal.interact_diameter_bm,
+            color_rgba: source_portal.color_rgba,
         });
         changed = true;
     }

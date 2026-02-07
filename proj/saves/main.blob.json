@@ -10,10 +10,10 @@
   },
   "tanks": [
     {
-      "id": 2066,
+      "id": 2172,
       "position_bm": [
-        4.1,
-        0.0
+        2.1056058,
+        -2.1644974
       ],
       "rotation_rad": -0.0,
       "hp": 100.0,
@@ -32,7 +32,14 @@
       ],
       "target_blob_save_file": "newland.blob.json",
       "target_portal_id": 2001,
-      "radius_bm": 0.45
+      "radius_bm": 0.45,
+      "interact_diameter_bm": 2.0,
+      "color_rgba": [
+        0.22,
+        0.58,
+        0.95,
+        1.0
+      ]
     }
   ]
 }

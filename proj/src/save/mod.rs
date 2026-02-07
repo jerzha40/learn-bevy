@@ -6,16 +6,16 @@ use bevy::log::{error, info};
 use bevy::prelude::*;
 use bevy::render::camera::RenderTarget;
 use bevy::render::view::RenderLayers;
-use bevy::window::{PresentMode, PrimaryWindow, WindowCloseRequested, WindowRef};
+use bevy::window::{PrimaryWindow, WindowCloseRequested, WindowRef};
 use serde::{Deserialize, Serialize};
 
-use crate::portal::Portal;
+use crate::portal::{Portal, DEFAULT_PORTAL_COLOR_RGBA, DEFAULT_PORTAL_INTERACT_DIAMETER_BM};
 use crate::projectile::baseprojectile::BaseProjectile;
 use crate::projectile::Projectile;
 use crate::tank::{FactionId, Tank, TankStats, PLAYER_FACTION_ID};
 use crate::windowblob::{
     blob_render_layer, BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow, NextBlobInstanceId,
-    MAIN_BLOB_INSTANCE_ID, MAIN_BLOB_SAVE_FILE, MAIN_BLOB_SIZE_BM,
+    WindowBlobPrefab, WindowBlobWindowBundle, MAIN_BLOB_INSTANCE_ID, MAIN_BLOB_SAVE_FILE,
 };
 
 pub const SAVE_SCHEMA_VERSION: u32 = 1;
@@ -160,6 +160,18 @@ pub struct PortalSaveV1 {
     pub target_blob_save_file: String,
     pub target_portal_id: u64,
     pub radius_bm: f32,
+    #[serde(default = "default_portal_interact_diameter_bm")]
+    pub interact_diameter_bm: f32,
+    #[serde(default = "default_portal_color_rgba")]
+    pub color_rgba: [f32; 4],
+}
+
+fn default_portal_interact_diameter_bm() -> f32 {
+    DEFAULT_PORTAL_INTERACT_DIAMETER_BM
+}
+
+fn default_portal_color_rgba() -> [f32; 4] {
+    DEFAULT_PORTAL_COLOR_RGBA
 }
 
 fn load_main_blob_or_bootstrap(
@@ -195,13 +207,14 @@ fn load_main_blob_or_bootstrap(
 
         (parsed_save, false)
     } else {
+        let main_prefab = WindowBlobPrefab::main_blob();
         (
             BlobSaveFileV1 {
                 schema_version: SAVE_SCHEMA_VERSION,
                 blob: BlobMetaV1 {
-                    save_file: MAIN_BLOB_SAVE_FILE.to_string(),
-                    size_bm: [MAIN_BLOB_SIZE_BM.x, MAIN_BLOB_SIZE_BM.y],
-                    pixels_per_bm: crate::windowblob::DEFAULT_PIXELS_PER_BM,
+                    save_file: main_prefab.save_file.clone(),
+                    size_bm: [main_prefab.size_bm.x, main_prefab.size_bm.y],
+                    pixels_per_bm: main_prefab.pixels_per_bm,
                 },
                 tanks: Vec::new(),
                 projectiles: Vec::new(),
@@ -211,12 +224,14 @@ fn load_main_blob_or_bootstrap(
         )
     };
 
-    commands.entity(primary_window_entity).insert(BlobWindow {
-        instance_id: MAIN_BLOB_INSTANCE_ID,
+    let main_blob_prefab = WindowBlobPrefab {
         save_file: loaded_blob.blob.save_file.clone(),
         size_bm: Vec2::new(loaded_blob.blob.size_bm[0], loaded_blob.blob.size_bm[1]),
         pixels_per_bm: loaded_blob.blob.pixels_per_bm,
-    });
+    };
+    commands
+        .entity(primary_window_entity)
+        .insert(BlobWindow::from_prefab(MAIN_BLOB_INSTANCE_ID, &main_blob_prefab));
 
     spawn_camera_for_blob_window(
         &mut commands,
@@ -445,26 +460,13 @@ fn handle_open_blob_window_requests(
         let blob_instance_id = next_blob_instance_id.0;
         next_blob_instance_id.0 = next_blob_instance_id.0.saturating_add(1);
 
-        let blob_size = Vec2::new(loaded_blob.blob.size_bm[0], loaded_blob.blob.size_bm[1]);
-        let pixels_per_bm = loaded_blob.blob.pixels_per_bm;
-
+        let blob_prefab = WindowBlobPrefab {
+            save_file: loaded_blob.blob.save_file.clone(),
+            size_bm: Vec2::new(loaded_blob.blob.size_bm[0], loaded_blob.blob.size_bm[1]),
+            pixels_per_bm: loaded_blob.blob.pixels_per_bm,
+        };
         let window_entity = commands
-            .spawn(Window {
-                title: format!("Tank Test Window [{}]", loaded_blob.blob.save_file),
-                resolution: (
-                    blob_size.x * pixels_per_bm,
-                    blob_size.y * pixels_per_bm,
-                )
-                    .into(),
-                present_mode: PresentMode::AutoNoVsync,
-                ..default()
-            })
-            .insert(BlobWindow {
-                instance_id: blob_instance_id,
-                save_file: loaded_blob.blob.save_file.clone(),
-                size_bm: blob_size,
-                pixels_per_bm,
-            })
+            .spawn(WindowBlobWindowBundle::from_prefab(blob_instance_id, &blob_prefab))
             .id();
 
         spawn_camera_for_blob_window(&mut commands, window_entity, blob_instance_id);
@@ -770,6 +772,8 @@ fn spawn_blob_entities(
                 target_blob_save_file: portal.target_blob_save_file.clone(),
                 target_portal_id: portal.target_portal_id,
                 radius_bm: portal.radius_bm,
+                interact_diameter_bm: portal.interact_diameter_bm,
+                color_rgba: portal.color_rgba,
             },
             SpatialBundle::from_transform(Transform::from_xyz(
                 portal.position_bm[0],
@@ -867,6 +871,8 @@ fn save_blob_instance_to_disk(
             target_blob_save_file: portal.target_blob_save_file.clone(),
             target_portal_id: portal.target_portal_id,
             radius_bm: portal.radius_bm,
+            interact_diameter_bm: portal.interact_diameter_bm,
+            color_rgba: portal.color_rgba,
         });
     }
     saved_portals.sort_by_key(|portal| portal.id);

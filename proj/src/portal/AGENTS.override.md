@@ -7,11 +7,17 @@
 
 ## 具体行为，实现
 
-portal是成对出现的，
+portal是成对出现的，对应传送门两边是相同颜色。  
 对应数据结构，一个portal要维护它的另一半，也就是
 
+### 固有数据
+
+- 大小，直径径R/bm
+- 检测范围F/bm
+- 颜色color
 - 指向世界
 - 指向的portal（通常是检查指向世界里面有没有这个指向的portal，因为同一个世界可能有很多portal）
+
 例子：
     mainblob有一个portal指向一个新世界newlandblob，和对应portal
     那系统在生成世界阶段就应该在加载mainblob发现这个portal时去检测是否存在newlandblob的存档，

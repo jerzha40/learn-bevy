@@ -7,7 +7,7 @@ mod save;
 mod tank;
 mod windowblob;
 
-const BASE_WINDOW_TITLE: &str = "Tank Test Window";
+const BASE_WINDOW_TITLE: &str = windowblob::BASE_WINDOW_TITLE;
 const BLOB_PIXELS_PER_BM: f32 = windowblob::DEFAULT_PIXELS_PER_BM;
 
 fn main() {
