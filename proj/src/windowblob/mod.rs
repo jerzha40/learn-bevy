@@ -1,26 +1,25 @@
 use bevy::prelude::*;
 use bevy::render::camera::{OrthographicProjection, ScalingMode};
-use bevy::window::PrimaryWindow;
 
 use crate::tank::{Tank, TANK_BODY_RADIUS_BM};
 
 pub const MAIN_BLOB_SAVE_FILE: &str = "main.blob.json";
 pub const MAIN_BLOB_SIZE_BM: Vec2 = Vec2::new(10.0, 10.0);
 pub const DEFAULT_PIXELS_PER_BM: f32 = 72.0;
+pub const MAIN_BLOB_INSTANCE_ID: u32 = 1;
 
 pub struct WindowBlobPlugin;
 
 impl Plugin for WindowBlobPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ActiveWindowBlob>()
-            .init_resource::<BlobRenderSettings>()
-            .init_resource::<BlobRenderMetrics>()
-            .add_systems(Update, apply_blob_projection_to_camera)
+        app.init_resource::<FocusedBlobInstance>()
+            .init_resource::<NextBlobInstanceId>()
             .add_systems(
                 Update,
                 (
+                    update_focused_blob_instance,
                     enforce_window_resolution_from_blob_settings,
-                    update_blob_render_metrics_from_window,
+                    apply_blob_projection_to_camera,
                 )
                     .chain(),
             )
@@ -28,123 +27,128 @@ impl Plugin for WindowBlobPlugin {
     }
 }
 
-#[derive(Resource, Debug, Clone)]
-pub struct ActiveWindowBlob {
+#[derive(Component, Debug, Clone)]
+pub struct BlobWindow {
+    pub instance_id: u32,
     pub save_file: String,
     pub size_bm: Vec2,
-}
-
-impl Default for ActiveWindowBlob {
-    fn default() -> Self {
-        Self {
-            save_file: MAIN_BLOB_SAVE_FILE.to_string(),
-            size_bm: MAIN_BLOB_SIZE_BM,
-        }
-    }
-}
-
-#[derive(Resource, Debug, Clone, Copy)]
-pub struct BlobRenderSettings {
     pub pixels_per_bm: f32,
 }
 
-impl Default for BlobRenderSettings {
-    fn default() -> Self {
-        Self {
-            pixels_per_bm: DEFAULT_PIXELS_PER_BM,
-        }
-    }
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlobInstanceId(pub u32);
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BlobRenderLayer(pub usize);
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BlobCamera {
+    pub instance_id: u32,
 }
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct FocusedBlobInstance(pub Option<u32>);
 
 #[derive(Resource, Debug, Clone, Copy)]
-pub struct BlobRenderMetrics {
-    pub pixels_per_bm: Vec2,
-}
+pub struct NextBlobInstanceId(pub u32);
 
-impl Default for BlobRenderMetrics {
+impl Default for NextBlobInstanceId {
     fn default() -> Self {
-        Self {
-            pixels_per_bm: Vec2::new(128.0, 72.0),
-        }
+        Self(MAIN_BLOB_INSTANCE_ID + 1)
     }
 }
 
-fn enforce_window_resolution_from_blob_settings(
-    active_blob: Res<ActiveWindowBlob>,
-    render_settings: Res<BlobRenderSettings>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
-) {
-    let Ok(mut window) = windows.get_single_mut() else {
-        return;
-    };
-
-    if active_blob.size_bm.x <= 0.0
-        || active_blob.size_bm.y <= 0.0
-        || render_settings.pixels_per_bm <= 0.0
-    {
-        return;
+impl Default for BlobInstanceId {
+    fn default() -> Self {
+        Self(MAIN_BLOB_INSTANCE_ID)
     }
+}
 
-    let target_width = active_blob.size_bm.x * render_settings.pixels_per_bm;
-    let target_height = active_blob.size_bm.y * render_settings.pixels_per_bm;
-    let epsilon = 0.5;
+impl Default for BlobRenderLayer {
+    fn default() -> Self {
+        Self(blob_render_layer(MAIN_BLOB_INSTANCE_ID))
+    }
+}
 
-    if (window.width() - target_width).abs() > epsilon
-        || (window.height() - target_height).abs() > epsilon
-    {
-        window.resolution.set(target_width, target_height);
+pub fn blob_render_layer(instance_id: u32) -> usize {
+    (((instance_id.saturating_sub(1)) % 31) + 1) as usize
+}
+
+fn update_focused_blob_instance(
+    mut focused_blob: ResMut<FocusedBlobInstance>,
+    windows: Query<(&Window, &BlobWindow)>,
+) {
+    focused_blob.0 = windows
+        .iter()
+        .find(|(window, _)| window.focused)
+        .map(|(_, blob_window)| blob_window.instance_id);
+}
+
+fn enforce_window_resolution_from_blob_settings(mut windows: Query<(&BlobWindow, &mut Window)>) {
+    for (blob_window, mut window) in &mut windows {
+        if blob_window.size_bm.x <= 0.0
+            || blob_window.size_bm.y <= 0.0
+            || blob_window.pixels_per_bm <= 0.0
+        {
+            continue;
+        }
+
+        let target_width = blob_window.size_bm.x * blob_window.pixels_per_bm;
+        let target_height = blob_window.size_bm.y * blob_window.pixels_per_bm;
+        let epsilon = 0.5;
+
+        if (window.width() - target_width).abs() > epsilon
+            || (window.height() - target_height).abs() > epsilon
+        {
+            window.resolution.set(target_width, target_height);
+        }
     }
 }
 
 fn apply_blob_projection_to_camera(
-    active_blob: Res<ActiveWindowBlob>,
-    mut cameras: Query<&mut OrthographicProjection, With<Camera2d>>,
+    blob_windows: Query<&BlobWindow>,
+    mut cameras: Query<(&BlobCamera, &mut OrthographicProjection), With<Camera2d>>,
 ) {
-    if active_blob.size_bm.x <= 0.0 || active_blob.size_bm.y <= 0.0 {
-        return;
-    }
+    for (blob_camera, mut projection) in &mut cameras {
+        let Some(blob_window) = blob_windows
+            .iter()
+            .find(|window| window.instance_id == blob_camera.instance_id)
+        else {
+            continue;
+        };
 
-    for mut projection in &mut cameras {
+        if blob_window.size_bm.x <= 0.0 || blob_window.size_bm.y <= 0.0 {
+            continue;
+        }
+
         projection.scale = 1.0;
         projection.scaling_mode = ScalingMode::Fixed {
-            width: active_blob.size_bm.x,
-            height: active_blob.size_bm.y,
+            width: blob_window.size_bm.x,
+            height: blob_window.size_bm.y,
         };
     }
 }
 
-fn update_blob_render_metrics_from_window(
-    active_blob: Res<ActiveWindowBlob>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut metrics: ResMut<BlobRenderMetrics>,
-) {
-    let Ok(window) = windows.get_single() else {
-        return;
-    };
-
-    if active_blob.size_bm.x <= 0.0 || active_blob.size_bm.y <= 0.0 {
-        return;
-    }
-
-    metrics.pixels_per_bm = Vec2::new(
-        window.width() / active_blob.size_bm.x,
-        window.height() / active_blob.size_bm.y,
-    );
-}
-
 fn clamp_tanks_inside_blob_boundary(
-    active_blob: Res<ActiveWindowBlob>,
-    mut tanks: Query<&mut Transform, With<Tank>>,
+    blob_windows: Query<&BlobWindow>,
+    mut tanks: Query<(&BlobInstanceId, &mut Transform), With<Tank>>,
 ) {
-    if active_blob.size_bm.x <= 0.0 || active_blob.size_bm.y <= 0.0 {
-        return;
-    }
+    for (blob_instance, mut transform) in &mut tanks {
+        let Some(blob_window) = blob_windows
+            .iter()
+            .find(|window| window.instance_id == blob_instance.0)
+        else {
+            continue;
+        };
 
-    let half_extents_bm = active_blob.size_bm * 0.5;
-    let clamp_x = (half_extents_bm.x - TANK_BODY_RADIUS_BM).max(0.0);
-    let clamp_y = (half_extents_bm.y - TANK_BODY_RADIUS_BM).max(0.0);
+        if blob_window.size_bm.x <= 0.0 || blob_window.size_bm.y <= 0.0 {
+            continue;
+        }
 
-    for mut transform in &mut tanks {
+        let half_extents_bm = blob_window.size_bm * 0.5;
+        let clamp_x = (half_extents_bm.x - TANK_BODY_RADIUS_BM).max(0.0);
+        let clamp_y = (half_extents_bm.y - TANK_BODY_RADIUS_BM).max(0.0);
+
         transform.translation.x = transform.translation.x.clamp(-clamp_x, clamp_x);
         transform.translation.y = transform.translation.y.clamp(-clamp_y, clamp_y);
     }

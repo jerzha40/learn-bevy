@@ -1,15 +1,18 @@
 use bevy::log::{error, info};
 use bevy::math::primitives::Circle;
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
-use bevy::window::PrimaryWindow;
 
 use crate::save::{
-    load_blob_from_disk, save_blob_to_disk, BlobMetaV1, BlobSaveFileV1, LoadBlobRequest,
-    PersistentEntityId, PortalSaveV1, SaveConfig, SAVE_SCHEMA_VERSION,
+    load_blob_from_disk, save_blob_to_disk, BlobMetaV1, BlobSaveFileV1, OpenBlobWindowRequest,
+    PersistentEntityId, PortalSaveV1, SaveConfig, TravelerTankState, SAVE_SCHEMA_VERSION,
 };
-use crate::tank::Tank;
-use crate::windowblob::{ActiveWindowBlob, BlobRenderSettings, MAIN_BLOB_SAVE_FILE, MAIN_BLOB_SIZE_BM};
+use crate::tank::{FactionId, Tank, TankStats};
+use crate::windowblob::{
+    blob_render_layer, BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow,
+    FocusedBlobInstance, MAIN_BLOB_INSTANCE_ID, MAIN_BLOB_SIZE_BM,
+};
 
 pub const PORTAL_INTERACT_DIAMETER_BM: f32 = 2.0;
 pub const DEFAULT_PORTAL_RADIUS_BM: f32 = 0.45;
@@ -63,15 +66,16 @@ pub struct PortalHovered;
 
 fn spawn_default_main_portal_if_empty(
     mut commands: Commands,
-    active_blob: Res<ActiveWindowBlob>,
-    portals: Query<Entity, With<Portal>>,
+    portals: Query<&BlobInstanceId, With<Portal>>,
 ) {
-    if active_blob.save_file != MAIN_BLOB_SAVE_FILE || !portals.is_empty() {
+    if portals.iter().any(|blob_instance| blob_instance.0 == MAIN_BLOB_INSTANCE_ID) {
         return;
     }
 
     commands.spawn((
         PersistentEntityId(MAIN_PORTAL_ID),
+        BlobInstanceId(MAIN_BLOB_INSTANCE_ID),
+        BlobRenderLayer(blob_render_layer(MAIN_BLOB_INSTANCE_ID)),
         Portal::new(NEWLAND_BLOB_SAVE_FILE, NEWLAND_RETURN_PORTAL_ID),
         SpatialBundle::from_transform(Transform::from_xyz(MAIN_BLOB_SIZE_BM.x * 0.3, 0.0, 0.0)),
     ));
@@ -81,11 +85,17 @@ fn assemble_portal_visuals(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    portals: Query<(Entity, &Portal), (With<Portal>, Without<PortalVisualBuilt>)>,
+    portals: Query<
+        (Entity, &Portal, &BlobInstanceId, &BlobRenderLayer),
+        (With<Portal>, Without<PortalVisualBuilt>),
+    >,
 ) {
-    for (portal_entity, portal) in &portals {
+    for (portal_entity, portal, blob_instance, blob_layer) in &portals {
         let body_entity = commands
             .spawn((
+                *blob_instance,
+                *blob_layer,
+                RenderLayers::layer(blob_layer.0),
                 MaterialMesh2dBundle {
                     mesh: meshes.add(Mesh::from(Circle::new(portal.radius_bm))).into(),
                     material: materials.add(ColorMaterial::from(Color::srgb(0.22, 0.58, 0.95))),
@@ -98,6 +108,9 @@ fn assemble_portal_visuals(
         let hover_entity = commands
             .spawn((
                 PortalHoverVisual,
+                *blob_instance,
+                *blob_layer,
+                RenderLayers::layer(blob_layer.0),
                 SpriteBundle {
                     sprite: Sprite {
                         color: Color::srgba(1.0, 0.95, 0.45, 0.35),
@@ -121,14 +134,29 @@ fn assemble_portal_visuals(
 
 fn update_hovered_portal(
     mut commands: Commands,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
-    portals: Query<(Entity, &GlobalTransform, &Portal, Option<&PortalHovered>), With<Portal>>,
+    focused_blob: Res<FocusedBlobInstance>,
+    windows: Query<(&Window, &BlobWindow)>,
+    cameras: Query<(&Camera, &GlobalTransform, &BlobCamera), With<Camera2d>>,
+    portals: Query<
+        (Entity, &GlobalTransform, &Portal, &BlobInstanceId, Option<&PortalHovered>),
+        With<Portal>,
+    >,
 ) {
-    let Ok(window) = windows.get_single() else {
+    let Some(focused_blob_id) = focused_blob.0 else {
         return;
     };
-    let Ok((camera, camera_transform)) = cameras.get_single() else {
+
+    let Some((window, _)) = windows
+        .iter()
+        .find(|(_, blob_window)| blob_window.instance_id == focused_blob_id)
+    else {
+        return;
+    };
+
+    let Some((camera, camera_transform, _)) = cameras
+        .iter()
+        .find(|(_, _, blob_camera)| blob_camera.instance_id == focused_blob_id)
+    else {
         return;
     };
 
@@ -138,7 +166,11 @@ fn update_hovered_portal(
         .and_then(|cursor_world| {
             let mut nearest: Option<(Entity, f32)> = None;
 
-            for (entity, transform, portal, _) in &portals {
+            for (entity, transform, portal, blob_instance, _) in &portals {
+                if blob_instance.0 != focused_blob_id {
+                    continue;
+                }
+
                 let portal_position = transform.translation().truncate();
                 let delta = cursor_world - portal_position;
                 let distance_sq = delta.length_squared();
@@ -157,7 +189,14 @@ fn update_hovered_portal(
             nearest.map(|(entity, _)| entity)
         });
 
-    for (entity, _, _, was_hovered) in &portals {
+    for (entity, _, _, blob_instance, was_hovered) in &portals {
+        if blob_instance.0 != focused_blob_id {
+            if was_hovered.is_some() {
+                commands.entity(entity).remove::<PortalHovered>();
+            }
+            continue;
+        }
+
         if Some(entity) == hovered_entity {
             if was_hovered.is_none() {
                 commands.entity(entity).insert(PortalHovered);
@@ -183,46 +222,69 @@ fn update_portal_hover_visuals(
 
 fn activate_hovered_portal(
     mouse_button: Res<ButtonInput<MouseButton>>,
-    active_blob: Res<ActiveWindowBlob>,
-    hovered_portals: Query<(&Portal, &Transform), (With<PortalHovered>, Without<Tank>)>,
-    all_portals: Query<(&PersistentEntityId, &Portal, &Transform), (With<Portal>, Without<Tank>)>,
+    blob_windows: Query<&BlobWindow>,
+    hovered_portals: Query<(&Portal, &Transform, &BlobInstanceId), (With<PortalHovered>, Without<Tank>)>,
+    all_portals: Query<(&PersistentEntityId, &Portal, &Transform, &BlobInstanceId), (With<Portal>, Without<Tank>)>,
     mut tanks: ParamSet<(
-        Query<(Entity, &Transform), With<Tank>>,
+        Query<(Entity, &Transform, &TankStats, &FactionId, &BlobInstanceId), With<Tank>>,
         Query<&mut Transform, With<Tank>>,
     )>,
-    mut load_blob_requests: EventWriter<LoadBlobRequest>,
+    mut open_blob_window_requests: EventWriter<OpenBlobWindowRequest>,
 ) {
     if !mouse_button.just_pressed(MouseButton::Left) {
         return;
     }
 
-    let Some((hovered_portal, hovered_transform)) = hovered_portals.iter().next() else {
+    let Some((hovered_portal, hovered_transform, portal_blob)) = hovered_portals.iter().next() else {
+        return;
+    };
+
+    let Some(source_blob_window) = blob_windows
+        .iter()
+        .find(|window| window.instance_id == portal_blob.0)
+    else {
         return;
     };
 
     let hovered_position = hovered_transform.translation.truncate();
     let activation_radius = PORTAL_INTERACT_DIAMETER_BM * 0.5;
-    let mut selected_tank_entity = None;
+    let mut selected_tank: Option<(Entity, TravelerTankState)> = None;
 
-    for (tank_entity, tank_transform) in tanks.p0().iter() {
-        let tank_position = tank_transform.translation.truncate();
-        if tank_position.distance_squared(hovered_position) <= activation_radius * activation_radius
-        {
-            selected_tank_entity = Some(tank_entity);
-            break;
+    for (tank_entity, tank_transform, tank_stats, tank_faction, tank_blob) in tanks.p0().iter() {
+        if tank_blob.0 != portal_blob.0 {
+            continue;
         }
+
+        let tank_position = tank_transform.translation.truncate();
+        if tank_position.distance_squared(hovered_position) > activation_radius * activation_radius {
+            continue;
+        }
+
+        let (_, _, rotation_rad) = tank_transform.rotation.to_euler(EulerRot::XYZ);
+        selected_tank = Some((
+            tank_entity,
+            TravelerTankState {
+                position_bm: [tank_position.x, tank_position.y],
+                rotation_rad,
+                hp: tank_stats.hp,
+                move_speed: tank_stats.move_speed,
+                turn_speed: tank_stats.turn_speed,
+                faction_id: tank_faction.0,
+            },
+        ));
+        break;
     }
 
-    let Some(selected_tank_entity) = selected_tank_entity else {
+    let Some((selected_tank_entity, traveler_tank_state)) = selected_tank else {
         return;
     };
 
-    if hovered_portal.target_blob_save_file == active_blob.save_file {
-        let target_portal = all_portals
-            .iter()
-            .find(|(portal_id, _, _)| portal_id.0 == hovered_portal.target_portal_id);
+    if hovered_portal.target_blob_save_file == source_blob_window.save_file {
+        let target_portal = all_portals.iter().find(|(portal_id, _, _, blob_instance)| {
+            blob_instance.0 == portal_blob.0 && portal_id.0 == hovered_portal.target_portal_id
+        });
 
-        let Some((_, _, target_transform)) = target_portal else {
+        let Some((_, _, target_transform, _)) = target_portal else {
             return;
         };
 
@@ -236,26 +298,29 @@ fn activate_hovered_portal(
         return;
     }
 
-    load_blob_requests.send(LoadBlobRequest {
+    open_blob_window_requests.send(OpenBlobWindowRequest {
+        source_blob_instance_id: portal_blob.0,
         target_save_file: hovered_portal.target_blob_save_file.clone(),
         spawn_near_portal_id: Some(hovered_portal.target_portal_id),
+        traveler_tank: Some(traveler_tank_state),
+        source_tank_entity: Some(selected_tank_entity),
     });
 }
 
 fn ensure_target_portal_exists_for_added_portals(
     save_config: Res<SaveConfig>,
-    active_blob: Res<ActiveWindowBlob>,
-    blob_render_settings: Res<BlobRenderSettings>,
-    portals: Query<(&PersistentEntityId, &Portal), Added<Portal>>,
+    blob_windows: Query<&BlobWindow>,
+    portals: Query<(&PersistentEntityId, &Portal, &BlobInstanceId), Added<Portal>>,
 ) {
-    for (portal_id, portal) in &portals {
-        match ensure_target_portal_exists(
-            &save_config,
-            &active_blob,
-            &blob_render_settings,
-            portal_id.0,
-            portal,
-        ) {
+    for (portal_id, portal, blob_instance) in &portals {
+        let Some(source_blob_window) = blob_windows
+            .iter()
+            .find(|window| window.instance_id == blob_instance.0)
+        else {
+            continue;
+        };
+
+        match ensure_target_portal_exists(&save_config, source_blob_window, portal_id.0, portal) {
             Ok(true) => info!(
                 "Ensured paired portal {} in {} for source portal {}",
                 portal.target_portal_id, portal.target_blob_save_file, portal_id.0
@@ -268,12 +333,11 @@ fn ensure_target_portal_exists_for_added_portals(
 
 fn ensure_target_portal_exists(
     save_config: &SaveConfig,
-    active_blob: &ActiveWindowBlob,
-    blob_render_settings: &BlobRenderSettings,
+    source_blob_window: &BlobWindow,
     source_portal_id: u64,
     source_portal: &Portal,
 ) -> Result<bool, String> {
-    if source_portal.target_blob_save_file == active_blob.save_file {
+    if source_portal.target_blob_save_file == source_blob_window.save_file {
         return Ok(false);
     }
 
@@ -294,8 +358,8 @@ fn ensure_target_portal_exists(
             schema_version: SAVE_SCHEMA_VERSION,
             blob: BlobMetaV1 {
                 save_file: source_portal.target_blob_save_file.clone(),
-                size_bm: [active_blob.size_bm.x, active_blob.size_bm.y],
-                pixels_per_bm: blob_render_settings.pixels_per_bm,
+                size_bm: [source_blob_window.size_bm.x, source_blob_window.size_bm.y],
+                pixels_per_bm: source_blob_window.pixels_per_bm,
             },
             tanks: Vec::new(),
             projectiles: Vec::new(),
@@ -312,8 +376,8 @@ fn ensure_target_portal_exists(
         }
         has_target_portal = true;
 
-        if portal.target_blob_save_file != active_blob.save_file {
-            portal.target_blob_save_file = active_blob.save_file.clone();
+        if portal.target_blob_save_file != source_blob_window.save_file {
+            portal.target_blob_save_file = source_blob_window.save_file.clone();
             changed = true;
         }
         if portal.target_portal_id != source_portal_id {
@@ -326,7 +390,7 @@ fn ensure_target_portal_exists(
         target_blob.portals.push(PortalSaveV1 {
             id: source_portal.target_portal_id,
             position_bm: [0.0, 0.0],
-            target_blob_save_file: active_blob.save_file.clone(),
+            target_blob_save_file: source_blob_window.save_file.clone(),
             target_portal_id: source_portal_id,
             radius_bm: source_portal.radius_bm,
         });

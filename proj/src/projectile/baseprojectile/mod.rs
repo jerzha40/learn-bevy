@@ -1,11 +1,13 @@
 use bevy::math::primitives::Circle;
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
 use crate::projectile::Projectile;
 use crate::tank::{
     FactionId, Tank, TankStats, TankTurretVisual, TANK_BODY_RADIUS_BM, TANK_TURRET_BARREL_LENGTH_BM,
 };
+use crate::windowblob::{BlobInstanceId, BlobRenderLayer, FocusedBlobInstance};
 
 pub const DEFAULT_TARGET_FACTION_ID: u8 = 2;
 
@@ -55,19 +57,29 @@ pub struct BaseProjectileVisualBuilt;
 pub struct BaseProjectileBundle {
     pub projectile: Projectile,
     pub base_projectile: BaseProjectile,
+    pub blob_instance: BlobInstanceId,
+    pub blob_render_layer: BlobRenderLayer,
     pub spatial: SpatialBundle,
 }
 
 fn fire_base_projectile(
     mouse_button: Res<ButtonInput<MouseButton>>,
+    focused_blob: Res<FocusedBlobInstance>,
     mut commands: Commands,
-    turrets: Query<(&Parent, &GlobalTransform), With<TankTurretVisual>>,
+    turrets: Query<(&GlobalTransform, &BlobInstanceId, &BlobRenderLayer), With<TankTurretVisual>>,
 ) {
+    let Some(focused_blob_id) = focused_blob.0 else {
+        return;
+    };
+
     if !mouse_button.just_pressed(MouseButton::Left) {
         return;
     }
 
-    let Some((_, turret_transform)) = turrets.iter().next() else {
+    let Some((turret_transform, turret_blob, turret_layer)) = turrets
+        .iter()
+        .find(|(_, blob_instance, _)| blob_instance.0 == focused_blob_id)
+    else {
         return;
     };
 
@@ -86,6 +98,8 @@ fn fire_base_projectile(
     commands.spawn(BaseProjectileBundle {
         projectile: Projectile,
         base_projectile: projectile,
+        blob_instance: *turret_blob,
+        blob_render_layer: *turret_layer,
         spatial: SpatialBundle::from_transform(Transform::from_xyz(
             spawn_position.x,
             spawn_position.y,
@@ -99,21 +113,25 @@ fn assemble_base_projectile_visuals(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     projectiles: Query<
-        (Entity, &BaseProjectile),
+        (Entity, &BaseProjectile, &BlobRenderLayer),
         (With<BaseProjectile>, Without<BaseProjectileVisualBuilt>),
     >,
 ) {
-    for (projectile_entity, projectile) in &projectiles {
+    for (projectile_entity, projectile, blob_layer) in &projectiles {
         let bullet_mesh = meshes.add(Mesh::from(Circle::new(projectile.radius)));
         let bullet_material = materials.add(ColorMaterial::from(Color::srgb(0.96, 0.9, 0.2)));
 
         let visual_entity = commands
-            .spawn(MaterialMesh2dBundle {
-                mesh: bullet_mesh.into(),
-                material: bullet_material,
-                transform: Transform::from_xyz(0.0, 0.0, 0.0),
-                ..default()
-            })
+            .spawn((
+                *blob_layer,
+                RenderLayers::layer(blob_layer.0),
+                MaterialMesh2dBundle {
+                    mesh: bullet_mesh.into(),
+                    material: bullet_material,
+                    transform: Transform::from_xyz(0.0, 0.0, 0.0),
+                    ..default()
+                },
+            ))
             .id();
 
         commands
@@ -141,14 +159,17 @@ fn move_base_projectiles(
 
 fn hit_tanks_with_base_projectiles(
     mut commands: Commands,
-    mut tanks: Query<(Entity, &Transform, &FactionId, &mut TankStats), With<Tank>>,
-    projectiles: Query<(Entity, &Transform, &BaseProjectile), With<Projectile>>,
+    mut tanks: Query<(Entity, &Transform, &FactionId, &BlobInstanceId, &mut TankStats), With<Tank>>,
+    projectiles: Query<(Entity, &Transform, &BaseProjectile, &BlobInstanceId), With<Projectile>>,
 ) {
-    for (projectile_entity, projectile_transform, projectile) in &projectiles {
+    for (projectile_entity, projectile_transform, projectile, projectile_blob) in &projectiles {
         let projectile_position = projectile_transform.translation.truncate();
         let mut has_hit = false;
 
-        for (_, tank_transform, tank_faction, mut tank_stats) in &mut tanks {
+        for (_, tank_transform, tank_faction, tank_blob, mut tank_stats) in &mut tanks {
+            if tank_blob.0 != projectile_blob.0 {
+                continue;
+            }
             if tank_faction.0 != projectile.target_faction_id {
                 continue;
             }

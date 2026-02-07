@@ -1,6 +1,6 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use bevy::window::{ExitCondition, PresentMode, PrimaryWindow};
+use bevy::window::{ExitCondition, PresentMode};
 mod projectile;
 mod portal;
 mod save;
@@ -28,41 +28,29 @@ fn main() {
             ..default()
         }))
         .add_plugins(FrameTimeDiagnosticsPlugin)
-        .insert_resource(windowblob::BlobRenderSettings {
-            pixels_per_bm: BLOB_PIXELS_PER_BM,
-        })
         .add_plugins(windowblob::WindowBlobPlugin)
         .add_plugins(save::SavePlugin)
         .add_plugins(portal::PortalPlugin)
         .add_plugins(tank::TankPlugin)
         .add_plugins(projectile::ProjectilePlugin)
-        .add_systems(Startup, setup_camera)
         .add_systems(Update, update_window_title_with_fps)
         .run();
 }
 
-fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2dBundle::default());
-}
-
 fn update_window_title_with_fps(
-    active_blob: Res<windowblob::ActiveWindowBlob>,
     diagnostics: Res<DiagnosticsStore>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut windows: Query<(&windowblob::BlobWindow, &mut Window)>,
 ) {
-    let Ok(mut window) = windows.get_single_mut() else {
-        return;
-    };
-
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(|diagnostic| diagnostic.smoothed());
 
-    let blob_label = format!("{} [{}]", BASE_WINDOW_TITLE, active_blob.save_file);
-
-    if let Some(fps) = fps {
-        window.title = format!("{blob_label} | FPS: {:.0}", fps);
-    } else {
-        window.title = blob_label;
+    for (blob_window, mut window) in &mut windows {
+        let blob_label = format!("{} [{}]", BASE_WINDOW_TITLE, blob_window.save_file);
+        if let Some(fps) = fps {
+            window.title = format!("{blob_label} | FPS: {:.0}", fps);
+        } else {
+            window.title = blob_label;
+        }
     }
 }

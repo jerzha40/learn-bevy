@@ -1,7 +1,12 @@
 use bevy::math::primitives::Circle;
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
-use bevy::window::PrimaryWindow;
+
+use crate::windowblob::{
+    blob_render_layer, BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow,
+    FocusedBlobInstance, MAIN_BLOB_INSTANCE_ID,
+};
 
 pub const TANK_BODY_RADIUS_BM: f32 = 0.35;
 pub const TANK_TURRET_BARREL_LENGTH_BM: f32 = 0.6;
@@ -71,6 +76,8 @@ pub struct TankBundle {
     pub tank: Tank,
     pub faction: FactionId,
     pub stats: TankStats,
+    pub blob_instance: BlobInstanceId,
+    pub blob_render_layer: BlobRenderLayer,
     pub spatial: SpatialBundle,
 }
 
@@ -81,6 +88,8 @@ fn spawn_default_tank_if_empty(mut commands: Commands, existing_tanks: Query<Ent
 
     commands.spawn(TankBundle {
         faction: FactionId(PLAYER_FACTION_ID),
+        blob_instance: BlobInstanceId(MAIN_BLOB_INSTANCE_ID),
+        blob_render_layer: BlobRenderLayer(blob_render_layer(MAIN_BLOB_INSTANCE_ID)),
         spatial: SpatialBundle::from_transform(Transform::from_xyz(0.0, 0.0, 0.0)),
         ..default()
     });
@@ -90,15 +99,18 @@ fn assemble_tank_visuals(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    tanks: Query<Entity, (With<Tank>, Without<TankVisualBuilt>)>,
+    tanks: Query<(Entity, &BlobInstanceId, &BlobRenderLayer), (With<Tank>, Without<TankVisualBuilt>)>,
 ) {
-    for tank_entity in &tanks {
+    for (tank_entity, blob_instance, blob_layer) in &tanks {
         let body_mesh = meshes.add(Mesh::from(Circle::new(TANK_BODY_RADIUS_BM)));
         let body_material = materials.add(ColorMaterial::from(Color::srgb(0.25, 0.72, 0.32)));
 
         let body_entity = commands
             .spawn((
                 TankBodyVisual,
+                *blob_instance,
+                *blob_layer,
+                RenderLayers::layer(blob_layer.0),
                 MaterialMesh2dBundle {
                     mesh: body_mesh.into(),
                     material: body_material,
@@ -111,6 +123,9 @@ fn assemble_tank_visuals(
         let turret_entity = commands
             .spawn((
                 TankTurretVisual,
+                *blob_instance,
+                *blob_layer,
+                RenderLayers::layer(blob_layer.0),
                 SpatialBundle::from_transform(Transform::from_xyz(0.0, 0.0, 2.0)),
             ))
             .id();
@@ -118,6 +133,9 @@ fn assemble_tank_visuals(
         let turret_barrel_entity = commands
             .spawn((
                 TankTurretBarrelVisual,
+                *blob_instance,
+                *blob_layer,
+                RenderLayers::layer(blob_layer.0),
                 SpriteBundle {
                     sprite: Sprite {
                         color: Color::srgb(0.16, 0.35, 0.2),
@@ -146,8 +164,13 @@ fn assemble_tank_visuals(
 fn move_tanks_with_wasd(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut tanks: Query<(&TankStats, &mut Transform), With<Tank>>,
+    focused_blob: Res<FocusedBlobInstance>,
+    mut tanks: Query<(&TankStats, &BlobInstanceId, &mut Transform), With<Tank>>,
 ) {
+    let Some(focused_blob_id) = focused_blob.0 else {
+        return;
+    };
+
     let mut movement_input = Vec2::ZERO;
 
     if keyboard_input.pressed(KeyCode::KeyW) {
@@ -169,7 +192,11 @@ fn move_tanks_with_wasd(
 
     let movement_direction = movement_input.normalize();
 
-    for (stats, mut transform) in &mut tanks {
+    for (stats, blob_instance, mut transform) in &mut tanks {
+        if blob_instance.0 != focused_blob_id {
+            continue;
+        }
+
         let movement_delta = movement_direction * stats.move_speed * time.delta_seconds();
         transform.translation.x += movement_delta.x;
         transform.translation.y += movement_delta.y;
@@ -177,18 +204,29 @@ fn move_tanks_with_wasd(
 }
 
 fn aim_turrets_at_cursor(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
-    tanks: Query<&GlobalTransform, With<Tank>>,
+    focused_blob: Res<FocusedBlobInstance>,
+    windows: Query<(&Window, &BlobWindow)>,
+    cameras: Query<(&Camera, &GlobalTransform, &BlobCamera), With<Camera2d>>,
+    tanks: Query<(&GlobalTransform, &BlobInstanceId), With<Tank>>,
     mut turrets: Query<(&Parent, &mut Transform), With<TankTurretVisual>>,
 ) {
-    let Ok(window) = windows.get_single() else {
+    let Some(focused_blob_id) = focused_blob.0 else {
+        return;
+    };
+
+    let Some((window, _)) = windows
+        .iter()
+        .find(|(_, blob_window)| blob_window.instance_id == focused_blob_id)
+    else {
         return;
     };
     let Some(cursor_position) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, camera_transform)) = cameras.get_single() else {
+    let Some((camera, camera_transform, _)) = cameras
+        .iter()
+        .find(|(_, _, blob_camera)| blob_camera.instance_id == focused_blob_id)
+    else {
         return;
     };
     let Some(cursor_world_position) = camera.viewport_to_world_2d(camera_transform, cursor_position)
@@ -197,9 +235,12 @@ fn aim_turrets_at_cursor(
     };
 
     for (parent, mut turret_transform) in &mut turrets {
-        let Ok(tank_transform) = tanks.get(parent.get()) else {
+        let Ok((tank_transform, tank_blob_instance)) = tanks.get(parent.get()) else {
             continue;
         };
+        if tank_blob_instance.0 != focused_blob_id {
+            continue;
+        }
         let tank_world_position = tank_transform.translation().truncate();
         let to_cursor = cursor_world_position - tank_world_position;
 
