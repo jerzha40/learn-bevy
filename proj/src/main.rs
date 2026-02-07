@@ -35,6 +35,7 @@ fn main() {
         .add_plugins(tank::TankPlugin)
         .add_plugins(inventory::InventoryPlugin)
         .add_plugins(inventory_avatars::InventoryAvatarsPlugin)
+        .add_plugins(inventory::crafting::CraftingPlugin)
         .add_plugins(portal::PortalPlugin)
         .add_plugins(projectile::ProjectilePlugin)
         .add_systems(Update, update_window_title_with_fps)

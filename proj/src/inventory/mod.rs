@@ -5,6 +5,8 @@ use crate::item::{BASE_KIND_NATURAL, base_kind_from_archetype};
 use crate::tank::{FactionId, PLAYER_FACTION_ID, Tank};
 use crate::windowblob::{BlobInstanceId, FocusedBlobInstance};
 
+pub mod crafting;
+
 pub const DEFAULT_INVENTORY_WIDTH: u16 = 9;
 pub const DEFAULT_INVENTORY_HEIGHT: u16 = 4;
 pub const INVENTORY_TOGGLE_KEY: KeyCode = KeyCode::KeyE;
@@ -114,6 +116,100 @@ impl Inventory {
         }
 
         removed
+    }
+
+    pub fn count_item(&self, item_archetype_id: &str) -> u32 {
+        self.slots
+            .0
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .filter(|stack| stack.item_archetype_id == item_archetype_id)
+            .map(|stack| stack.quantity)
+            .sum()
+    }
+
+    pub fn can_accept_stack(&self, stack: &InventoryAvatarStack) -> bool {
+        if !stack.is_allowed_in_inventory() || stack.quantity == 0 {
+            return false;
+        }
+
+        self.slots.0.iter().any(|slot| {
+            slot.as_ref()
+                .map(|existing| existing.item_archetype_id == stack.item_archetype_id)
+                .unwrap_or(false)
+        }) || self.slots.0.iter().any(|slot| slot.is_none())
+    }
+
+    pub fn try_add_stack(&mut self, stack: InventoryAvatarStack) -> Result<(), String> {
+        if !stack.is_allowed_in_inventory() {
+            return Err(format!(
+                "item {} cannot be inserted into inventory",
+                stack.item_archetype_id
+            ));
+        }
+        if stack.quantity == 0 {
+            return Err(format!(
+                "item {} has zero quantity and cannot be inserted",
+                stack.item_archetype_id
+            ));
+        }
+
+        if let Some(existing_slot) = self.slots.0.iter_mut().find(|slot| {
+            slot.as_ref()
+                .map(|existing| existing.item_archetype_id == stack.item_archetype_id)
+                .unwrap_or(false)
+        }) {
+            if let Some(existing_stack) = existing_slot.as_mut() {
+                existing_stack.quantity = existing_stack.quantity.saturating_add(stack.quantity);
+                return Ok(());
+            }
+        }
+
+        let Some(empty_slot) = self.slots.0.iter_mut().find(|slot| slot.is_none()) else {
+            return Err("inventory is full".to_string());
+        };
+
+        *empty_slot = Some(stack);
+        Ok(())
+    }
+
+    pub fn try_remove_quantity(
+        &mut self,
+        item_archetype_id: &str,
+        mut quantity: u32,
+    ) -> Result<(), String> {
+        if quantity == 0 {
+            return Ok(());
+        }
+        let available = self.count_item(item_archetype_id);
+        if available < quantity {
+            return Err(format!(
+                "not enough {} in inventory: need {}, has {}",
+                item_archetype_id, quantity, available
+            ));
+        }
+
+        for slot in &mut self.slots.0 {
+            let Some(stack) = slot.as_mut() else {
+                continue;
+            };
+            if stack.item_archetype_id != item_archetype_id {
+                continue;
+            }
+
+            let take = stack.quantity.min(quantity);
+            stack.quantity -= take;
+            quantity -= take;
+            if stack.quantity == 0 {
+                *slot = None;
+            }
+
+            if quantity == 0 {
+                return Ok(());
+            }
+        }
+
+        Ok(())
     }
 }
 

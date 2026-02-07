@@ -4,16 +4,16 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
+use crate::inventory::crafting::SelectedMarker;
 use crate::inventory::Inventory;
-use crate::inventory::{OpenInventoryState, SelectedAvatarForPlacement};
 use crate::save::{
     load_blob_from_disk, save_blob_to_disk, BlobMetaV1, BlobSaveFileV1, OpenBlobWindowRequest,
     PersistentEntityId, PortalSaveV1, SaveConfig, TravelerTankState, SAVE_SCHEMA_VERSION,
 };
 use crate::tank::{FactionId, Tank, TankStats};
 use crate::windowblob::{
-    blob_render_layer, BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow,
-    FocusedBlobInstance, MAIN_BLOB_INSTANCE_ID, MAIN_BLOB_SIZE_BM,
+    blob_render_layer, BlobInstanceId, BlobRenderLayer, BlobWindow, MAIN_BLOB_INSTANCE_ID,
+    MAIN_BLOB_SIZE_BM,
 };
 
 pub const DEFAULT_PORTAL_INTERACT_DIAMETER_BM: f32 = 2.0;
@@ -27,18 +27,24 @@ pub struct PortalPlugin;
 
 impl Plugin for PortalPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_default_main_portal_if_empty)
+        app.add_event::<PortalInteractRequest>()
+            .add_systems(Startup, spawn_default_main_portal_if_empty)
             .add_systems(
                 Update,
                 (
                     assemble_portal_visuals,
-                    update_hovered_portal,
                     update_portal_hover_visuals,
-                    activate_hovered_portal,
+                    handle_portal_interact_requests,
                     ensure_target_portal_exists_for_added_portals,
                 ),
             );
     }
+}
+
+#[derive(Event, Debug, Clone, Copy)]
+pub struct PortalInteractRequest {
+    pub portal_entity: Entity,
+    pub player_tank_entity: Entity,
 }
 
 #[derive(Component, Debug, Clone)]
@@ -76,9 +82,6 @@ pub struct PortalVisualBuilt;
 
 #[derive(Component, Debug)]
 pub struct PortalHoverVisual;
-
-#[derive(Component, Debug)]
-pub struct PortalHovered;
 
 fn spawn_default_main_portal_if_empty(
     mut commands: Commands,
@@ -153,87 +156,12 @@ fn assemble_portal_visuals(
     }
 }
 
-fn update_hovered_portal(
-    mut commands: Commands,
-    focused_blob: Res<FocusedBlobInstance>,
-    windows: Query<(&Window, &BlobWindow)>,
-    cameras: Query<(&Camera, &GlobalTransform, &BlobCamera), With<Camera2d>>,
-    portals: Query<
-        (Entity, &GlobalTransform, &Portal, &BlobInstanceId, Option<&PortalHovered>),
-        With<Portal>,
-    >,
-) {
-    let Some(focused_blob_id) = focused_blob.0 else {
-        return;
-    };
-
-    let Some((window, _)) = windows
-        .iter()
-        .find(|(_, blob_window)| blob_window.instance_id == focused_blob_id)
-    else {
-        return;
-    };
-
-    let Some((camera, camera_transform, _)) = cameras
-        .iter()
-        .find(|(_, _, blob_camera)| blob_camera.instance_id == focused_blob_id)
-    else {
-        return;
-    };
-
-    let hovered_entity = window
-        .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor))
-        .and_then(|cursor_world| {
-            let mut nearest: Option<(Entity, f32)> = None;
-
-            for (entity, transform, portal, blob_instance, _) in &portals {
-                if blob_instance.0 != focused_blob_id {
-                    continue;
-                }
-
-                let portal_position = transform.translation().truncate();
-                let delta = cursor_world - portal_position;
-                let distance_sq = delta.length_squared();
-                if distance_sq > portal.radius_bm * portal.radius_bm {
-                    continue;
-                }
-
-                match nearest {
-                    Some((_, current_distance_sq)) if current_distance_sq <= distance_sq => {}
-                    _ => {
-                        nearest = Some((entity, distance_sq));
-                    }
-                }
-            }
-
-            nearest.map(|(entity, _)| entity)
-        });
-
-    for (entity, _, _, blob_instance, was_hovered) in &portals {
-        if blob_instance.0 != focused_blob_id {
-            if was_hovered.is_some() {
-                commands.entity(entity).remove::<PortalHovered>();
-            }
-            continue;
-        }
-
-        if Some(entity) == hovered_entity {
-            if was_hovered.is_none() {
-                commands.entity(entity).insert(PortalHovered);
-            }
-        } else if was_hovered.is_some() {
-            commands.entity(entity).remove::<PortalHovered>();
-        }
-    }
-}
-
 fn update_portal_hover_visuals(
-    hovered_portals: Query<(), With<PortalHovered>>,
+    selected_portals: Query<(), (With<Portal>, With<SelectedMarker>)>,
     mut hover_visuals: Query<(&Parent, &mut Visibility), With<PortalHoverVisual>>,
 ) {
     for (parent, mut visibility) in &mut hover_visuals {
-        if hovered_portals.contains(parent.get()) {
+        if selected_portals.contains(parent.get()) {
             *visibility = Visibility::Visible;
         } else {
             *visibility = Visibility::Hidden;
@@ -241,12 +169,10 @@ fn update_portal_hover_visuals(
     }
 }
 
-fn activate_hovered_portal(
-    mouse_button: Res<ButtonInput<MouseButton>>,
-    open_inventory_state: Res<OpenInventoryState>,
-    selected_avatar: Res<SelectedAvatarForPlacement>,
+fn handle_portal_interact_requests(
+    mut portal_interact_requests: EventReader<PortalInteractRequest>,
     blob_windows: Query<&BlobWindow>,
-    hovered_portals: Query<(&Portal, &Transform, &BlobInstanceId), (With<PortalHovered>, Without<Tank>)>,
+    portals: Query<(Entity, &Portal, &Transform, &BlobInstanceId), (With<Portal>, Without<Tank>)>,
     all_portals: Query<(&PersistentEntityId, &Portal, &Transform, &BlobInstanceId), (With<Portal>, Without<Tank>)>,
     mut tanks: ParamSet<(
         Query<(Entity, &Transform, &TankStats, &FactionId, &BlobInstanceId, &Inventory), With<Tank>>,
@@ -254,85 +180,84 @@ fn activate_hovered_portal(
     )>,
     mut open_blob_window_requests: EventWriter<OpenBlobWindowRequest>,
 ) {
-    if open_inventory_state.is_open() || selected_avatar.is_active_preview() {
-        return;
-    }
-
-    if !mouse_button.just_pressed(MouseButton::Left) {
-        return;
-    }
-
-    let Some((hovered_portal, hovered_transform, portal_blob)) = hovered_portals.iter().next() else {
-        return;
-    };
-
-    let Some(source_blob_window) = blob_windows
-        .iter()
-        .find(|window| window.instance_id == portal_blob.0)
-    else {
-        return;
-    };
-
-    let hovered_position = hovered_transform.translation.truncate();
-    let activation_radius = hovered_portal.interact_diameter_bm * 0.5;
-    let mut selected_tank: Option<(Entity, TravelerTankState)> = None;
-
-    for (tank_entity, tank_transform, tank_stats, tank_faction, tank_blob, tank_inventory) in tanks.p0().iter() {
-        if tank_blob.0 != portal_blob.0 {
+    for request in portal_interact_requests.read() {
+        let Ok((_, portal, portal_transform, portal_blob)) = portals.get(request.portal_entity) else {
             continue;
-        }
-
-        let tank_position = tank_transform.translation.truncate();
-        if tank_position.distance_squared(hovered_position) > activation_radius * activation_radius {
-            continue;
-        }
-
-        let (_, _, rotation_rad) = tank_transform.rotation.to_euler(EulerRot::XYZ);
-        selected_tank = Some((
-            tank_entity,
-            TravelerTankState {
-                position_bm: [tank_position.x, tank_position.y],
-                rotation_rad,
-                hp: tank_stats.hp,
-                move_speed: tank_stats.move_speed,
-                turn_speed: tank_stats.turn_speed,
-                faction_id: tank_faction.0,
-                inventory: tank_inventory.clone(),
-            },
-        ));
-        break;
-    }
-
-    let Some((selected_tank_entity, traveler_tank_state)) = selected_tank else {
-        return;
-    };
-
-    if hovered_portal.target_blob_save_file == source_blob_window.save_file {
-        let target_portal = all_portals.iter().find(|(portal_id, _, _, blob_instance)| {
-            blob_instance.0 == portal_blob.0 && portal_id.0 == hovered_portal.target_portal_id
-        });
-
-        let Some((_, _, target_transform, _)) = target_portal else {
-            return;
         };
 
-        let target_position = target_transform.translation.truncate();
-        let offset = Vec2::X * (activation_radius + 0.1);
+        let Some((tank_entity, tank_blob_id, tank_position, traveler_tank_state)) = (|| {
+            let tank_query = tanks.p0();
+            let Ok((tank_entity, tank_transform, tank_stats, tank_faction, tank_blob, tank_inventory)) =
+                tank_query.get(request.player_tank_entity)
+            else {
+                return None;
+            };
 
-        if let Ok(mut tank_transform) = tanks.p1().get_mut(selected_tank_entity) {
-            tank_transform.translation.x = target_position.x + offset.x;
-            tank_transform.translation.y = target_position.y + offset.y;
+            let tank_position = tank_transform.translation.truncate();
+            let (_, _, rotation_rad) = tank_transform.rotation.to_euler(EulerRot::XYZ);
+
+            Some((
+                tank_entity,
+                tank_blob.0,
+                tank_position,
+                TravelerTankState {
+                    position_bm: [tank_position.x, tank_position.y],
+                    rotation_rad,
+                    hp: tank_stats.hp,
+                    move_speed: tank_stats.move_speed,
+                    turn_speed: tank_stats.turn_speed,
+                    faction_id: tank_faction.0,
+                    inventory: tank_inventory.clone(),
+                },
+            ))
+        })() else {
+            continue;
+        };
+
+        if tank_entity != request.player_tank_entity || tank_blob_id != portal_blob.0 {
+            continue;
         }
-        return;
-    }
 
-    open_blob_window_requests.send(OpenBlobWindowRequest {
-        source_blob_instance_id: portal_blob.0,
-        target_save_file: hovered_portal.target_blob_save_file.clone(),
-        spawn_near_portal_id: Some(hovered_portal.target_portal_id),
-        traveler_tank: Some(traveler_tank_state),
-        source_tank_entity: Some(selected_tank_entity),
-    });
+        let activation_radius = portal.interact_diameter_bm * 0.5;
+        let portal_position = portal_transform.translation.truncate();
+        if tank_position.distance_squared(portal_position) > activation_radius * activation_radius {
+            continue;
+        }
+
+        let Some(source_blob_window) = blob_windows
+            .iter()
+            .find(|window| window.instance_id == portal_blob.0)
+        else {
+            continue;
+        };
+
+        if portal.target_blob_save_file == source_blob_window.save_file {
+            let target_portal = all_portals.iter().find(|(portal_id, _, _, blob_instance)| {
+                blob_instance.0 == portal_blob.0 && portal_id.0 == portal.target_portal_id
+            });
+
+            let Some((_, _, target_transform, _)) = target_portal else {
+                continue;
+            };
+
+            let target_position = target_transform.translation.truncate();
+            let offset = Vec2::X * (activation_radius + 0.1);
+
+            if let Ok(mut tank_transform) = tanks.p1().get_mut(tank_entity) {
+                tank_transform.translation.x = target_position.x + offset.x;
+                tank_transform.translation.y = target_position.y + offset.y;
+            }
+            continue;
+        }
+
+        open_blob_window_requests.send(OpenBlobWindowRequest {
+            source_blob_instance_id: portal_blob.0,
+            target_save_file: portal.target_blob_save_file.clone(),
+            spawn_near_portal_id: Some(portal.target_portal_id),
+            traveler_tank: Some(traveler_tank_state),
+            source_tank_entity: Some(tank_entity),
+        });
+    }
 }
 
 fn ensure_target_portal_exists_for_added_portals(

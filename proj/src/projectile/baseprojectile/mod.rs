@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
+use crate::inventory::crafting::{ActiveInteractionTarget, HoveredInteractionTarget};
 use crate::inventory::{OpenInventoryState, SelectedAvatarForPlacement};
 use crate::projectile::Projectile;
 use crate::tank::{
@@ -68,6 +69,8 @@ fn fire_base_projectile(
     focused_blob: Res<FocusedBlobInstance>,
     open_inventory_state: Res<OpenInventoryState>,
     selected_avatar: Res<SelectedAvatarForPlacement>,
+    active_interaction_target: Res<ActiveInteractionTarget>,
+    hovered_interaction_target: Res<HoveredInteractionTarget>,
     mut commands: Commands,
     turrets: Query<(&GlobalTransform, &BlobInstanceId, &BlobRenderLayer), With<TankTurretVisual>>,
 ) {
@@ -80,6 +83,10 @@ fn fire_base_projectile(
     };
 
     if !mouse_button.just_pressed(MouseButton::Left) {
+        return;
+    }
+
+    if active_interaction_target.0.is_some() || hovered_interaction_target.0.is_some() {
         return;
     }
 

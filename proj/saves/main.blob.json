@@ -8,7 +8,62 @@
     ],
     "pixels_per_bm": 72.0
   },
-  "tanks": [],
+  "tanks": [
+    {
+      "id": 2031,
+      "position_bm": [
+        2.2467947,
+        -0.6075656
+      ],
+      "rotation_rad": -0.0,
+      "hp": 100.0,
+      "move_speed": 2.4,
+      "turn_speed": 3.2,
+      "faction_id": 1,
+      "inventory": {
+        "width": 9,
+        "height": 4,
+        "slots": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    }
+  ],
   "projectiles": [],
   "portals": [
     {
@@ -45,6 +100,30 @@
       ],
       "base_kind": "factory",
       "sub_kind": "drill",
+      "inventory": {
+        "width": 3,
+        "height": 3,
+        "slots": [
+          {
+            "item_archetype_id": "material/ore/iron",
+            "quantity": 65,
+            "color_rgba": [
+              0.82,
+              0.83,
+              0.87,
+              1.0
+            ]
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
       "ore_data": null,
       "drill_data": {
         "mineable_ore_kinds": [
@@ -68,11 +147,50 @@
       ],
       "base_kind": "natural",
       "sub_kind": "ore",
+      "inventory": null,
       "ore_data": {
         "ore_kind": "iron",
         "yield_per_second": 1.0
       },
       "drill_data": null
+    },
+    {
+      "id": 2006,
+      "position_bm": [
+        0.027777553,
+        0.15972197
+      ],
+      "radius_bm": 0.3,
+      "color_rgba": [
+        0.96,
+        0.68,
+        0.18,
+        1.0
+      ],
+      "base_kind": "factory",
+      "sub_kind": "drill",
+      "inventory": {
+        "width": 3,
+        "height": 3,
+        "slots": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      "ore_data": null,
+      "drill_data": {
+        "mineable_ore_kinds": [
+          "iron"
+        ],
+        "mining_speed_per_second": 1.0
+      }
     }
   ]
 }

@@ -13,6 +13,7 @@ pub const TANK_BODY_RADIUS_BM: f32 = 0.35;
 pub const TANK_TURRET_BARREL_LENGTH_BM: f32 = 0.6;
 pub const TANK_TURRET_BARREL_THICKNESS_BM: f32 = 0.14;
 pub const PLAYER_FACTION_ID: u8 = 1;
+pub const DEFAULT_TANK_INTERACTION_RADIUS_BM: f32 = 2.0;
 
 pub struct TankPlugin;
 
@@ -22,6 +23,7 @@ impl Plugin for TankPlugin {
             .add_systems(
                 Update,
                 (
+                    ensure_tank_interaction_radius,
                     assemble_tank_visuals,
                     move_tanks_with_wasd,
                     aim_turrets_at_cursor,
@@ -48,6 +50,19 @@ pub struct TankStats {
     pub hp: f32,
     pub move_speed: f32,
     pub turn_speed: f32,
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct TankInteractionRadius {
+    pub radius_bm: f32,
+}
+
+impl Default for TankInteractionRadius {
+    fn default() -> Self {
+        Self {
+            radius_bm: DEFAULT_TANK_INTERACTION_RADIUS_BM,
+        }
+    }
 }
 
 impl Default for TankStats {
@@ -77,6 +92,7 @@ pub struct TankBundle {
     pub tank: Tank,
     pub faction: FactionId,
     pub stats: TankStats,
+    pub interaction_radius: TankInteractionRadius,
     pub inventory: Inventory,
     pub blob_instance: BlobInstanceId,
     pub blob_render_layer: BlobRenderLayer,
@@ -95,6 +111,17 @@ fn spawn_default_tank_if_empty(mut commands: Commands, existing_tanks: Query<Ent
         spatial: SpatialBundle::from_transform(Transform::from_xyz(0.0, 0.0, 0.0)),
         ..default()
     });
+}
+
+fn ensure_tank_interaction_radius(
+    mut commands: Commands,
+    tanks_without_radius: Query<Entity, (With<Tank>, Without<TankInteractionRadius>)>,
+) {
+    for tank_entity in &tanks_without_radius {
+        commands
+            .entity(tank_entity)
+            .insert(TankInteractionRadius::default());
+    }
 }
 
 fn assemble_tank_visuals(

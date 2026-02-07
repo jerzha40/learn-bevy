@@ -3,15 +3,20 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
+use crate::inventory::{Inventory, InventoryAvatarStack};
 use crate::windowblob::{blob_render_layer, BlobInstanceId, BlobRenderLayer, MAIN_BLOB_INSTANCE_ID};
 
 pub const BASE_KIND_NATURAL: &str = "natural";
 pub const BASE_KIND_FACTORY: &str = "factory";
+pub const BASE_KIND_MATERIAL: &str = "material";
 pub const SUB_KIND_ORE: &str = "ore";
 pub const SUB_KIND_DRILL: &str = "drill";
 pub const DEFAULT_ITEM_RADIUS_BM: f32 = 0.22;
 pub const DEFAULT_ORE_YIELD_PER_SECOND: f32 = 1.0;
 pub const DEFAULT_DRILL_MINING_SPEED_PER_SECOND: f32 = 1.0;
+pub const DEFAULT_DRILL_MINING_RADIUS_BM: f32 = 2.5;
+pub const DEFAULT_DRILL_INVENTORY_WIDTH: u16 = 3;
+pub const DEFAULT_DRILL_INVENTORY_HEIGHT: u16 = 3;
 pub const DEFAULT_MAIN_ORE_KIND: &str = "iron";
 pub const DEFAULT_MAIN_ORE_POSITION_BM: Vec2 = Vec2::new(-2.4, 1.2);
 pub const DEFAULT_MAIN_ORE_COLOR_RGBA: [f32; 4] = [0.7, 0.7, 0.76, 1.0];
@@ -21,7 +26,16 @@ pub struct ItemPlugin;
 impl Plugin for ItemPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_default_main_blob_ore_if_missing)
-            .add_systems(Update, assemble_item_visuals);
+            .add_systems(
+                Update,
+                (
+                    ensure_selectable_base_items,
+                    ensure_drill_runtime_components,
+                    run_drill_auto_mining,
+                    assemble_item_visuals,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -58,6 +72,27 @@ pub struct DrillData {
     pub mineable_ore_kinds: Vec<String>,
     pub mining_speed_per_second: f32,
 }
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct DrillMiningRadius {
+    pub radius_bm: f32,
+}
+
+impl Default for DrillMiningRadius {
+    fn default() -> Self {
+        Self {
+            radius_bm: DEFAULT_DRILL_MINING_RADIUS_BM,
+        }
+    }
+}
+
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct DrillMiningProgress {
+    pub produced_fractional_amount: f32,
+}
+
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct SelectableBaseItem;
 
 #[derive(Component, Debug)]
 pub struct ItemVisualBuilt;
@@ -109,6 +144,146 @@ fn spawn_default_main_blob_ore_if_missing(
     ));
 }
 
+fn ensure_selectable_base_items(world: &mut World) {
+    let mut query =
+        world.query_filtered::<(Entity, &BaseItem), (With<Item>, Without<SelectableBaseItem>)>();
+    let to_mark: Vec<Entity> = query
+        .iter(world)
+        .filter_map(|(entity, base_item)| {
+            if base_item.base_kind == BASE_KIND_NATURAL || base_item.base_kind == BASE_KIND_FACTORY {
+                Some(entity)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for entity in to_mark {
+        if let Some(mut entity_ref) = world.get_entity_mut(entity) {
+            entity_ref.insert(SelectableBaseItem);
+        }
+    }
+}
+
+fn ensure_drill_runtime_components(world: &mut World) {
+    let mut query = world.query_filtered::<
+        (
+            Entity,
+            &BaseItem,
+            Option<&DrillData>,
+            Option<&Inventory>,
+            Option<&DrillMiningRadius>,
+            Option<&DrillMiningProgress>,
+        ),
+        With<Item>,
+    >();
+
+    let to_patch: Vec<(Entity, bool, bool)> = query
+        .iter(world)
+        .filter_map(
+            |(entity, base_item, drill_data, maybe_inventory, mining_radius, mining_progress)| {
+                if base_item.base_kind != BASE_KIND_FACTORY || base_item.sub_kind != SUB_KIND_DRILL {
+                    return None;
+                }
+                if drill_data.is_none() {
+                    return None;
+                }
+
+                let needs_runtime = mining_radius.is_none() || mining_progress.is_none();
+                let needs_inventory = maybe_inventory.is_none();
+                if !needs_runtime && !needs_inventory {
+                    return None;
+                }
+
+                Some((entity, needs_runtime, needs_inventory))
+            },
+        )
+        .collect();
+
+    for (entity, needs_runtime, needs_inventory) in to_patch {
+        if let Some(mut entity_ref) = world.get_entity_mut(entity) {
+            if needs_runtime {
+                entity_ref.insert((DrillMiningRadius::default(), DrillMiningProgress::default()));
+            }
+            if needs_inventory {
+                entity_ref.insert(Inventory::new(
+                    DEFAULT_DRILL_INVENTORY_WIDTH,
+                    DEFAULT_DRILL_INVENTORY_HEIGHT,
+                ));
+            }
+        }
+    }
+}
+
+fn run_drill_auto_mining(
+    time: Res<Time>,
+    ores: Query<(&Transform, &BlobInstanceId, &BaseItem, &OreData), With<Item>>,
+    mut drills: Query<
+        (
+            &Transform,
+            &BlobInstanceId,
+            &BaseItem,
+            &DrillData,
+            &DrillMiningRadius,
+            &mut DrillMiningProgress,
+            &mut Inventory,
+        ),
+        With<Item>,
+    >,
+) {
+    for (
+        drill_transform,
+        drill_blob,
+        base_item,
+        drill_data,
+        drill_radius,
+        mut drill_progress,
+        mut drill_inventory,
+    ) in &mut drills
+    {
+        if base_item.base_kind != BASE_KIND_FACTORY || base_item.sub_kind != SUB_KIND_DRILL {
+            continue;
+        }
+        if drill_radius.radius_bm <= 0.0 || drill_data.mining_speed_per_second <= 0.0 {
+            continue;
+        }
+
+        let drill_position = drill_transform.translation.truncate();
+
+        let maybe_nearby_ore = ores.iter().find(|(ore_transform, ore_blob, ore_base_item, ore_data)| {
+            if ore_blob.0 != drill_blob.0 {
+                return false;
+            }
+            if ore_base_item.base_kind != BASE_KIND_NATURAL || ore_base_item.sub_kind != SUB_KIND_ORE {
+                return false;
+            }
+            if !drill_data.mineable_ore_kinds.iter().any(|kind| kind == &ore_data.ore_kind) {
+                return false;
+            }
+            drill_position.distance_squared(ore_transform.translation.truncate())
+                <= drill_radius.radius_bm * drill_radius.radius_bm
+        });
+
+        let Some((_, _, _, ore_data)) = maybe_nearby_ore else {
+            continue;
+        };
+
+        drill_progress.produced_fractional_amount +=
+            drill_data.mining_speed_per_second * time.delta_seconds();
+
+        while drill_progress.produced_fractional_amount >= 1.0 {
+            drill_progress.produced_fractional_amount -= 1.0;
+            let output_archetype = material_ore_archetype(&ore_data.ore_kind);
+            let output_stack = InventoryAvatarStack {
+                color_rgba: default_color_for_archetype(&output_archetype),
+                item_archetype_id: output_archetype,
+                quantity: 1,
+            };
+            let _ = drill_inventory.try_add_stack(output_stack);
+        }
+    }
+}
+
 pub fn base_kind_from_archetype(item_archetype_id: &str) -> &str {
     item_archetype_id.split('/').next().unwrap_or("unknown")
 }
@@ -125,8 +300,63 @@ pub fn default_item_radius_for_archetype(item_archetype_id: &str) -> f32 {
         0.26
     } else if base_kind == BASE_KIND_FACTORY && sub_kind == SUB_KIND_DRILL {
         0.3
+    } else if base_kind == BASE_KIND_MATERIAL && sub_kind == SUB_KIND_ORE {
+        0.2
     } else {
         DEFAULT_ITEM_RADIUS_BM
+    }
+}
+
+pub fn default_color_for_archetype(item_archetype_id: &str) -> [f32; 4] {
+    let base_kind = base_kind_from_archetype(item_archetype_id);
+    let sub_kind = sub_kind_from_archetype(item_archetype_id);
+    let ore_kind = item_archetype_id.split('/').nth(2).unwrap_or("generic");
+
+    if base_kind == BASE_KIND_FACTORY && sub_kind == SUB_KIND_DRILL {
+        [0.96, 0.68, 0.18, 1.0]
+    } else if base_kind == BASE_KIND_NATURAL && sub_kind == SUB_KIND_ORE {
+        [0.7, 0.7, 0.76, 1.0]
+    } else if base_kind == BASE_KIND_MATERIAL && sub_kind == SUB_KIND_ORE {
+        match ore_kind {
+            "iron" => [0.82, 0.83, 0.87, 1.0],
+            "copper" => [0.86, 0.54, 0.36, 1.0],
+            _ => [0.78, 0.78, 0.78, 1.0],
+        }
+    } else {
+        [0.8, 0.8, 0.8, 1.0]
+    }
+}
+
+pub fn material_ore_archetype(ore_kind: &str) -> String {
+    format!("{BASE_KIND_MATERIAL}/{SUB_KIND_ORE}/{ore_kind}")
+}
+
+pub fn archetype_from_world_item(
+    base_item: &BaseItem,
+    ore_data: Option<&OreData>,
+    drill_data: Option<&DrillData>,
+) -> String {
+    if base_item.base_kind == BASE_KIND_FACTORY && base_item.sub_kind == SUB_KIND_DRILL {
+        let preferred_ore_kind = drill_data
+            .and_then(|drill| drill.mineable_ore_kinds.first())
+            .cloned()
+            .unwrap_or_else(|| "generic".to_string());
+        format!("{BASE_KIND_FACTORY}/{SUB_KIND_DRILL}/{preferred_ore_kind}")
+    } else if base_item.base_kind == BASE_KIND_NATURAL && base_item.sub_kind == SUB_KIND_ORE {
+        let ore_kind = ore_data
+            .map(|ore| ore.ore_kind.clone())
+            .unwrap_or_else(|| "generic".to_string());
+        format!("{BASE_KIND_NATURAL}/{SUB_KIND_ORE}/{ore_kind}")
+    } else {
+        format!("{}/{}", base_item.base_kind, base_item.sub_kind)
+    }
+}
+
+pub fn station_kind_for_world_item(base_item: &BaseItem) -> Option<&'static str> {
+    if base_item.base_kind == BASE_KIND_FACTORY && base_item.sub_kind == SUB_KIND_DRILL {
+        Some("drill")
+    } else {
+        None
     }
 }
 

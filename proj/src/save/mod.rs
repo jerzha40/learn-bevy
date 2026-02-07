@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use crate::inventory::{
     DEFAULT_INVENTORY_HEIGHT, DEFAULT_INVENTORY_WIDTH, Inventory, InventoryAvatarStack,
 };
-use crate::item::{BaseItem, DrillData, Item, OreData};
+use crate::item::{
+    BASE_KIND_FACTORY, BaseItem, DEFAULT_DRILL_INVENTORY_HEIGHT, DEFAULT_DRILL_INVENTORY_WIDTH, DrillData,
+    Item, OreData, SUB_KIND_DRILL,
+};
 use crate::portal::{DEFAULT_PORTAL_COLOR_RGBA, DEFAULT_PORTAL_INTERACT_DIAMETER_BM, Portal};
 use crate::projectile::Projectile;
 use crate::projectile::baseprojectile::BaseProjectile;
@@ -228,6 +231,8 @@ pub struct ItemSaveV1 {
     pub base_kind: String,
     pub sub_kind: String,
     #[serde(default)]
+    pub inventory: Option<InventorySaveV1>,
+    #[serde(default)]
     pub ore_data: Option<OreDataSaveV1>,
     #[serde(default)]
     pub drill_data: Option<DrillDataSaveV1>,
@@ -406,6 +411,7 @@ fn perform_initial_save_if_pending(
             &BaseItem,
             Option<&OreData>,
             Option<&DrillData>,
+            Option<&Inventory>,
         ),
         With<Item>,
     >,
@@ -470,6 +476,7 @@ fn autosave_blob_state(
             &BaseItem,
             Option<&OreData>,
             Option<&DrillData>,
+            Option<&Inventory>,
         ),
         With<Item>,
     >,
@@ -535,6 +542,7 @@ fn handle_open_blob_window_requests(
             &BaseItem,
             Option<&OreData>,
             Option<&DrillData>,
+            Option<&Inventory>,
         ),
         With<Item>,
     >,
@@ -725,6 +733,7 @@ fn save_on_window_close_requested(
             &BaseItem,
             Option<&OreData>,
             Option<&DrillData>,
+            Option<&Inventory>,
         ),
         With<Item>,
     >,
@@ -1064,6 +1073,17 @@ fn spawn_blob_entities(
                 mining_speed_per_second: drill_data.mining_speed_per_second,
             });
         }
+
+        if let Some(saved_inventory) = &item.inventory {
+            commands
+                .entity(item_entity)
+                .insert(inventory_from_save_data(saved_inventory));
+        } else if item.base_kind == BASE_KIND_FACTORY && item.sub_kind == SUB_KIND_DRILL {
+            commands.entity(item_entity).insert(Inventory::new(
+                DEFAULT_DRILL_INVENTORY_WIDTH,
+                DEFAULT_DRILL_INVENTORY_HEIGHT,
+            ));
+        }
     }
 
     max_id
@@ -1164,6 +1184,7 @@ fn save_all_open_blobs(
             &BaseItem,
             Option<&OreData>,
             Option<&DrillData>,
+            Option<&Inventory>,
         ),
         With<Item>,
     >,
@@ -1216,6 +1237,7 @@ fn save_blob_instance_to_disk(
             &BaseItem,
             Option<&OreData>,
             Option<&DrillData>,
+            Option<&Inventory>,
         ),
         With<Item>,
     >,
@@ -1279,7 +1301,7 @@ fn save_blob_instance_to_disk(
     saved_portals.sort_by_key(|portal| portal.id);
 
     let mut saved_items = Vec::new();
-    for (item_blob, id, transform, base_item, ore_data, drill_data) in items.iter() {
+    for (item_blob, id, transform, base_item, ore_data, drill_data, item_inventory) in items.iter() {
         if item_blob.0 != blob_window.instance_id {
             continue;
         }
@@ -1291,6 +1313,7 @@ fn save_blob_instance_to_disk(
             color_rgba: base_item.color_rgba,
             base_kind: base_item.base_kind.clone(),
             sub_kind: base_item.sub_kind.clone(),
+            inventory: item_inventory.map(inventory_save_from_component),
             ore_data: ore_data.map(|ore| OreDataSaveV1 {
                 ore_kind: ore.ore_kind.clone(),
                 yield_per_second: ore.yield_per_second,
