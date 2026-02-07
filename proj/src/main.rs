@@ -6,19 +6,27 @@ mod tank;
 mod windowblob;
 
 const BASE_WINDOW_TITLE: &str = "Tank Test Window";
+const BLOB_PIXELS_PER_BM: f32 = windowblob::DEFAULT_PIXELS_PER_BM;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: BASE_WINDOW_TITLE.to_string(),
-                resolution: (1280.0, 720.0).into(),
+                resolution: (
+                    windowblob::MAIN_BLOB_SIZE_BM.x * BLOB_PIXELS_PER_BM,
+                    windowblob::MAIN_BLOB_SIZE_BM.y * BLOB_PIXELS_PER_BM,
+                )
+                    .into(),
                 present_mode: PresentMode::AutoNoVsync,
                 ..default()
             }),
             ..default()
         }))
         .add_plugins(FrameTimeDiagnosticsPlugin)
+        .insert_resource(windowblob::BlobRenderSettings {
+            pixels_per_bm: BLOB_PIXELS_PER_BM,
+        })
         .add_plugins(windowblob::WindowBlobPlugin)
         .add_plugins(tank::TankPlugin)
         .add_plugins(projectile::ProjectilePlugin)

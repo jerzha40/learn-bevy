@@ -6,15 +6,24 @@ use crate::tank::{Tank, TANK_BODY_RADIUS_BM};
 
 pub const MAIN_BLOB_SAVE_FILE: &str = "main.blob.json";
 pub const MAIN_BLOB_SIZE_BM: Vec2 = Vec2::new(10.0, 10.0);
+pub const DEFAULT_PIXELS_PER_BM: f32 = 72.0;
 
 pub struct WindowBlobPlugin;
 
 impl Plugin for WindowBlobPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActiveWindowBlob>()
+            .init_resource::<BlobRenderSettings>()
             .init_resource::<BlobRenderMetrics>()
             .add_systems(Update, apply_blob_projection_to_camera)
-            .add_systems(Update, update_blob_render_metrics_from_window)
+            .add_systems(
+                Update,
+                (
+                    enforce_window_resolution_from_blob_settings,
+                    update_blob_render_metrics_from_window,
+                )
+                    .chain(),
+            )
             .add_systems(PostUpdate, clamp_tanks_inside_blob_boundary);
     }
 }
@@ -35,6 +44,19 @@ impl Default for ActiveWindowBlob {
 }
 
 #[derive(Resource, Debug, Clone, Copy)]
+pub struct BlobRenderSettings {
+    pub pixels_per_bm: f32,
+}
+
+impl Default for BlobRenderSettings {
+    fn default() -> Self {
+        Self {
+            pixels_per_bm: DEFAULT_PIXELS_PER_BM,
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone, Copy)]
 pub struct BlobRenderMetrics {
     pub pixels_per_bm: Vec2,
 }
@@ -44,6 +66,33 @@ impl Default for BlobRenderMetrics {
         Self {
             pixels_per_bm: Vec2::new(128.0, 72.0),
         }
+    }
+}
+
+fn enforce_window_resolution_from_blob_settings(
+    active_blob: Res<ActiveWindowBlob>,
+    render_settings: Res<BlobRenderSettings>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    let Ok(mut window) = windows.get_single_mut() else {
+        return;
+    };
+
+    if active_blob.size_bm.x <= 0.0
+        || active_blob.size_bm.y <= 0.0
+        || render_settings.pixels_per_bm <= 0.0
+    {
+        return;
+    }
+
+    let target_width = active_blob.size_bm.x * render_settings.pixels_per_bm;
+    let target_height = active_blob.size_bm.y * render_settings.pixels_per_bm;
+    let epsilon = 0.5;
+
+    if (window.width() - target_width).abs() > epsilon
+        || (window.height() - target_height).abs() > epsilon
+    {
+        window.resolution.set(target_width, target_height);
     }
 }
 
