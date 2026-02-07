@@ -8,6 +8,7 @@ use crate::windowblob::{BlobInstanceId, FocusedBlobInstance};
 pub const DEFAULT_INVENTORY_WIDTH: u16 = 9;
 pub const DEFAULT_INVENTORY_HEIGHT: u16 = 4;
 pub const INVENTORY_TOGGLE_KEY: KeyCode = KeyCode::KeyE;
+pub const STARTER_DRILL_ARCHETYPE_ID: &str = "factory/drill/iron";
 
 pub struct InventoryPlugin;
 
@@ -37,7 +38,16 @@ pub struct Inventory {
 
 impl Default for Inventory {
     fn default() -> Self {
-        Self::new(DEFAULT_INVENTORY_WIDTH, DEFAULT_INVENTORY_HEIGHT)
+        let mut inventory = Self::new(DEFAULT_INVENTORY_WIDTH, DEFAULT_INVENTORY_HEIGHT);
+        let _ = inventory.try_set_slot(
+            0,
+            Some(InventoryAvatarStack {
+                item_archetype_id: STARTER_DRILL_ARCHETYPE_ID.to_string(),
+                quantity: 1,
+                color_rgba: [0.96, 0.68, 0.18, 1.0],
+            }),
+        );
+        inventory
     }
 }
 

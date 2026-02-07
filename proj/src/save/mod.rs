@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::inventory::{
     DEFAULT_INVENTORY_HEIGHT, DEFAULT_INVENTORY_WIDTH, Inventory, InventoryAvatarStack,
 };
-use crate::item::{BaseItem, Item, OreData};
+use crate::item::{BaseItem, DrillData, Item, OreData};
 use crate::portal::{Portal, DEFAULT_PORTAL_COLOR_RGBA, DEFAULT_PORTAL_INTERACT_DIAMETER_BM};
 use crate::projectile::baseprojectile::BaseProjectile;
 use crate::projectile::Projectile;
@@ -222,12 +222,21 @@ pub struct ItemSaveV1 {
     pub sub_kind: String,
     #[serde(default)]
     pub ore_data: Option<OreDataSaveV1>,
+    #[serde(default)]
+    pub drill_data: Option<DrillDataSaveV1>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OreDataSaveV1 {
     pub ore_kind: String,
     pub yield_per_second: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DrillDataSaveV1 {
+    #[serde(default)]
+    pub mineable_ore_kinds: Vec<String>,
+    pub mining_speed_per_second: f32,
 }
 
 fn default_inventory_width() -> u16 {
@@ -367,7 +376,17 @@ fn perform_initial_save_if_pending(
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
-    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
+    items: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseItem,
+            Option<&OreData>,
+            Option<&DrillData>,
+        ),
+        With<Item>,
+    >,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     if !initial_save_pending.0 {
@@ -405,7 +424,17 @@ fn autosave_blob_state(
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
-    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
+    items: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseItem,
+            Option<&OreData>,
+            Option<&DrillData>,
+        ),
+        With<Item>,
+    >,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     if !autosave_timer.0.tick(time.delta()).just_finished() {
@@ -444,7 +473,17 @@ fn handle_open_blob_window_requests(
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
-    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
+    items: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseItem,
+            Option<&OreData>,
+            Option<&DrillData>,
+        ),
+        With<Item>,
+    >,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     for request in open_blob_window_requests.read() {
@@ -598,7 +637,17 @@ fn save_on_window_close_requested(
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
-    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
+    items: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseItem,
+            Option<&OreData>,
+            Option<&DrillData>,
+        ),
+        With<Item>,
+    >,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     let mut successful_closes = 0usize;
@@ -918,6 +967,12 @@ fn spawn_blob_entities(
                 yield_per_second: ore_data.yield_per_second,
             });
         }
+        if let Some(drill_data) = &item.drill_data {
+            commands.entity(item_entity).insert(DrillData {
+                mineable_ore_kinds: drill_data.mineable_ore_kinds.clone(),
+                mining_speed_per_second: drill_data.mining_speed_per_second,
+            });
+        }
     }
 
     max_id
@@ -991,7 +1046,17 @@ fn save_all_open_blobs(
     >,
     projectiles: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
-    items: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
+    items: &Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseItem,
+            Option<&OreData>,
+            Option<&DrillData>,
+        ),
+        With<Item>,
+    >,
 ) -> Result<(), String> {
     for blob_window in blob_windows.iter() {
         save_blob_instance_to_disk(
@@ -1017,7 +1082,17 @@ fn save_blob_instance_to_disk(
     >,
     projectiles: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
-    items: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
+    items: &Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseItem,
+            Option<&OreData>,
+            Option<&DrillData>,
+        ),
+        With<Item>,
+    >,
     skip_tank_entity: Option<Entity>,
 ) -> Result<(), String> {
     let mut saved_tanks = Vec::new();
@@ -1078,7 +1153,7 @@ fn save_blob_instance_to_disk(
     saved_portals.sort_by_key(|portal| portal.id);
 
     let mut saved_items = Vec::new();
-    for (item_blob, id, transform, base_item, ore_data) in items.iter() {
+    for (item_blob, id, transform, base_item, ore_data, drill_data) in items.iter() {
         if item_blob.0 != blob_window.instance_id {
             continue;
         }
@@ -1093,6 +1168,10 @@ fn save_blob_instance_to_disk(
             ore_data: ore_data.map(|ore| OreDataSaveV1 {
                 ore_kind: ore.ore_kind.clone(),
                 yield_per_second: ore.yield_per_second,
+            }),
+            drill_data: drill_data.map(|drill| DrillDataSaveV1 {
+                mineable_ore_kinds: drill.mineable_ore_kinds.clone(),
+                mining_speed_per_second: drill.mining_speed_per_second,
             }),
         });
     }

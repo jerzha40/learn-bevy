@@ -6,7 +6,9 @@ use crate::inventory::{
     Inventory, OpenInventoryState, PlacementStage, SelectedAvatarForPlacement,
     SelectedAvatarPlacement,
 };
-use crate::item::{BaseItem, Item, ItemBundle, default_item_radius_for_archetype, metadata_from_archetype};
+use crate::item::{
+    BaseItem, Item, ItemBundle, default_item_radius_for_archetype, metadata_from_archetype,
+};
 use crate::tank::Tank;
 use crate::windowblob::{
     BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow, FocusedBlobInstance,
@@ -560,7 +562,8 @@ fn confirm_or_cancel_preview_placement(
         return;
     }
 
-    let (base_kind, sub_kind, ore_data) = metadata_from_archetype(&slot_stack.item_archetype_id);
+    let (base_kind, sub_kind, ore_data, drill_data) =
+        metadata_from_archetype(&slot_stack.item_archetype_id);
     let item_radius = default_item_radius_for_archetype(&slot_stack.item_archetype_id);
     let item_color = slot_stack.color_rgba;
 
@@ -584,6 +587,9 @@ fn confirm_or_cancel_preview_placement(
         .id();
     if let Some(ore_data) = ore_data {
         commands.entity(item_entity).insert(ore_data);
+    }
+    if let Some(drill_data) = drill_data {
+        commands.entity(item_entity).insert(drill_data);
     }
 
     slot_stack.quantity = slot_stack.quantity.saturating_sub(1);

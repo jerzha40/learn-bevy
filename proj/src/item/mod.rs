@@ -6,9 +6,12 @@ use bevy::sprite::MaterialMesh2dBundle;
 use crate::windowblob::{BlobInstanceId, BlobRenderLayer};
 
 pub const BASE_KIND_NATURAL: &str = "natural";
+pub const BASE_KIND_FACTORY: &str = "factory";
 pub const SUB_KIND_ORE: &str = "ore";
+pub const SUB_KIND_DRILL: &str = "drill";
 pub const DEFAULT_ITEM_RADIUS_BM: f32 = 0.22;
 pub const DEFAULT_ORE_YIELD_PER_SECOND: f32 = 1.0;
+pub const DEFAULT_DRILL_MINING_SPEED_PER_SECOND: f32 = 1.0;
 
 pub struct ItemPlugin;
 
@@ -46,6 +49,12 @@ pub struct OreData {
     pub yield_per_second: f32,
 }
 
+#[derive(Component, Debug, Clone)]
+pub struct DrillData {
+    pub mineable_ore_kinds: Vec<String>,
+    pub mining_speed_per_second: f32,
+}
+
 #[derive(Component, Debug)]
 pub struct ItemVisualBuilt;
 
@@ -72,12 +81,16 @@ pub fn default_item_radius_for_archetype(item_archetype_id: &str) -> f32 {
 
     if base_kind == BASE_KIND_NATURAL && sub_kind == SUB_KIND_ORE {
         0.26
+    } else if base_kind == BASE_KIND_FACTORY && sub_kind == SUB_KIND_DRILL {
+        0.3
     } else {
         DEFAULT_ITEM_RADIUS_BM
     }
 }
 
-pub fn metadata_from_archetype(item_archetype_id: &str) -> (String, String, Option<OreData>) {
+pub fn metadata_from_archetype(
+    item_archetype_id: &str,
+) -> (String, String, Option<OreData>, Option<DrillData>) {
     let base_kind = base_kind_from_archetype(item_archetype_id).to_string();
     let sub_kind = sub_kind_from_archetype(item_archetype_id).to_string();
 
@@ -95,7 +108,27 @@ pub fn metadata_from_archetype(item_archetype_id: &str) -> (String, String, Opti
         None
     };
 
-    (base_kind, sub_kind, ore_data)
+    let drill_data = if base_kind == BASE_KIND_FACTORY && sub_kind == SUB_KIND_DRILL {
+        let mineable_ore_kinds: Vec<String> = item_archetype_id
+            .split('/')
+            .skip(2)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .collect();
+
+        Some(DrillData {
+            mineable_ore_kinds: if mineable_ore_kinds.is_empty() {
+                vec!["generic".to_string()]
+            } else {
+                mineable_ore_kinds
+            },
+            mining_speed_per_second: DEFAULT_DRILL_MINING_SPEED_PER_SECOND,
+        })
+    } else {
+        None
+    };
+
+    (base_kind, sub_kind, ore_data, drill_data)
 }
 
 fn assemble_item_visuals(
