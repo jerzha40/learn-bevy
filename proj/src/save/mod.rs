@@ -7,9 +7,10 @@ use bevy::prelude::*;
 use bevy::window::WindowCloseRequested;
 use serde::{Deserialize, Serialize};
 
+use crate::portal::Portal;
 use crate::projectile::baseprojectile::BaseProjectile;
 use crate::projectile::Projectile;
-use crate::tank::{FactionId, Tank, TankStats};
+use crate::tank::{FactionId, Tank, TankStats, PLAYER_FACTION_ID};
 use crate::windowblob::{ActiveWindowBlob, BlobRenderSettings, MAIN_BLOB_SAVE_FILE};
 
 pub const SAVE_SCHEMA_VERSION: u32 = 1;
@@ -19,7 +20,8 @@ pub struct SavePlugin;
 
 impl Plugin for SavePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SaveConfig>()
+        app.add_event::<LoadBlobRequest>()
+            .init_resource::<SaveConfig>()
             .init_resource::<AutosaveTimer>()
             .init_resource::<NextPersistentEntityId>()
             .init_resource::<InitialSavePending>()
@@ -28,8 +30,15 @@ impl Plugin for SavePlugin {
             .add_systems(Update, assign_persistent_ids)
             .add_systems(Update, perform_initial_save_if_pending.after(assign_persistent_ids))
             .add_systems(Update, autosave_blob_state.after(assign_persistent_ids))
+            .add_systems(Update, handle_load_blob_requests.after(assign_persistent_ids))
             .add_systems(Update, save_on_window_close_requested.after(assign_persistent_ids));
     }
+}
+
+#[derive(Event, Debug, Clone)]
+pub struct LoadBlobRequest {
+    pub target_save_file: String,
+    pub spawn_near_portal_id: Option<u64>,
 }
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -89,6 +98,8 @@ pub struct BlobSaveFileV1 {
     pub blob: BlobMetaV1,
     pub tanks: Vec<TankSaveV1>,
     pub projectiles: Vec<ProjectileSaveV1>,
+    #[serde(default)]
+    pub portals: Vec<PortalSaveV1>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -119,6 +130,15 @@ pub struct ProjectileSaveV1 {
     pub damage: f32,
     pub radius: f32,
     pub target_faction_id: u8,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PortalSaveV1 {
+    pub id: u64,
+    pub position_bm: [f32; 2],
+    pub target_blob_save_file: String,
+    pub target_portal_id: u64,
+    pub radius_bm: f32,
 }
 
 fn load_main_blob_or_bootstrap(
@@ -157,53 +177,15 @@ fn load_main_blob_or_bootstrap(
         );
     }
 
-    active_blob.save_file = parsed_save.blob.save_file.clone();
-    active_blob.size_bm = Vec2::new(parsed_save.blob.size_bm[0], parsed_save.blob.size_bm[1]);
-    blob_render_settings.pixels_per_bm = parsed_save.blob.pixels_per_bm;
-
-    let mut max_id: u64 = 0;
-
-    for tank in parsed_save.tanks {
-        max_id = max_id.max(tank.id);
-        commands.spawn((
-            PersistentEntityId(tank.id),
-            Tank,
-            FactionId(tank.faction_id),
-            TankStats {
-                hp: tank.hp,
-                move_speed: tank.move_speed,
-                turn_speed: tank.turn_speed,
-            },
-            SpatialBundle::from_transform(Transform {
-                translation: Vec3::new(tank.position_bm[0], tank.position_bm[1], 0.0),
-                rotation: Quat::from_rotation_z(tank.rotation_rad),
-                ..default()
-            }),
-        ));
-    }
-
-    for projectile in parsed_save.projectiles {
-        max_id = max_id.max(projectile.id);
-        commands.spawn((
-            PersistentEntityId(projectile.id),
-            Projectile,
-            BaseProjectile {
-                speed: projectile.speed,
-                remaining_distance: projectile.remaining_distance,
-                damage: projectile.damage,
-                radius: projectile.radius,
-                direction: Vec2::new(projectile.direction[0], projectile.direction[1]),
-                target_faction_id: projectile.target_faction_id,
-            },
-            SpatialBundle::from_transform(Transform::from_xyz(
-                projectile.position_bm[0],
-                projectile.position_bm[1],
-                4.0,
-            )),
-        ));
-    }
-
-    next_id.0 = max_id.saturating_add(1).max(1);
+    next_id.0 = apply_loaded_blob_to_world(
+        &mut commands,
+        &parsed_save,
+        &mut active_blob,
+        &mut blob_render_settings,
+        None,
+    )
+    .saturating_add(1)
+    .max(1);
     initial_save_pending.0 = false;
 
     info!("Loaded save from {}", save_path.display());
@@ -212,7 +194,13 @@ fn load_main_blob_or_bootstrap(
 fn assign_persistent_ids(
     mut commands: Commands,
     mut next_id: ResMut<NextPersistentEntityId>,
-    entities: Query<Entity, (Without<PersistentEntityId>, Or<(With<Tank>, With<Projectile>)>)>,
+    entities: Query<
+        Entity,
+        (
+            Without<PersistentEntityId>,
+            Or<(With<Tank>, With<Projectile>, With<Portal>)>,
+        ),
+    >,
 ) {
     for entity in &entities {
         let id = next_id.0;
@@ -228,6 +216,7 @@ fn perform_initial_save_if_pending(
     blob_render_settings: Res<BlobRenderSettings>,
     tanks: Query<(&PersistentEntityId, &Transform, &TankStats, &FactionId), With<Tank>>,
     projectiles: Query<(&PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    portals: Query<(&PersistentEntityId, &Transform, &Portal)>,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     if !initial_save_pending.0 {
@@ -240,6 +229,7 @@ fn perform_initial_save_if_pending(
         &blob_render_settings,
         &tanks,
         &projectiles,
+        &portals,
     ) {
         Ok(()) => {
             initial_save_pending.0 = false;
@@ -261,6 +251,7 @@ fn autosave_blob_state(
     blob_render_settings: Res<BlobRenderSettings>,
     tanks: Query<(&PersistentEntityId, &Transform, &TankStats, &FactionId), With<Tank>>,
     projectiles: Query<(&PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    portals: Query<(&PersistentEntityId, &Transform, &Portal)>,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     if !autosave_timer.0.tick(time.delta()).just_finished() {
@@ -273,6 +264,7 @@ fn autosave_blob_state(
         &blob_render_settings,
         &tanks,
         &projectiles,
+        &portals,
     ) {
         Ok(()) => {
             last_save_error.0 = None;
@@ -292,6 +284,7 @@ fn save_on_window_close_requested(
     blob_render_settings: Res<BlobRenderSettings>,
     tanks: Query<(&PersistentEntityId, &Transform, &TankStats, &FactionId), With<Tank>>,
     projectiles: Query<(&PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    portals: Query<(&PersistentEntityId, &Transform, &Portal)>,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     let close_requested = close_requests.read().next().is_some();
@@ -305,6 +298,7 @@ fn save_on_window_close_requested(
         &blob_render_settings,
         &tanks,
         &projectiles,
+        &portals,
     ) {
         Ok(()) => {
             last_save_error.0 = None;
@@ -317,16 +311,203 @@ fn save_on_window_close_requested(
     }
 }
 
+fn handle_load_blob_requests(
+    mut commands: Commands,
+    mut load_blob_requests: EventReader<LoadBlobRequest>,
+    save_config: Res<SaveConfig>,
+    mut active_blob: ResMut<ActiveWindowBlob>,
+    mut blob_render_settings: ResMut<BlobRenderSettings>,
+    tanks: Query<(&PersistentEntityId, &Transform, &TankStats, &FactionId), With<Tank>>,
+    projectiles: Query<(&PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    portals: Query<(&PersistentEntityId, &Transform, &Portal)>,
+    blob_entities: Query<Entity, Or<(With<Tank>, With<Projectile>, With<Portal>)>>,
+    mut next_id: ResMut<NextPersistentEntityId>,
+    mut last_save_error: ResMut<LastSaveError>,
+) {
+    let Some(request) = load_blob_requests.read().last().cloned() else {
+        return;
+    };
+
+    if let Err(err) = save_current_blob_state(
+        &save_config,
+        &active_blob,
+        &blob_render_settings,
+        &tanks,
+        &projectiles,
+        &portals,
+    ) {
+        error!("Failed to save current blob before portal transfer: {}", err);
+        last_save_error.0 = Some(err);
+        return;
+    }
+
+    let target_path = save_config.save_path_for(&request.target_save_file);
+    if !target_path.exists() {
+        let err = format!("target blob save {} does not exist", target_path.display());
+        error!("{}", err);
+        last_save_error.0 = Some(err);
+        return;
+    }
+
+    let loaded_blob = match load_blob_from_disk(&target_path) {
+        Ok(loaded) => loaded,
+        Err(err) => {
+            error!("Failed to load target blob {}: {}", target_path.display(), err);
+            last_save_error.0 = Some(err);
+            return;
+        }
+    };
+
+    if loaded_blob.schema_version != SAVE_SCHEMA_VERSION {
+        let err = format!(
+            "unsupported schema_version {} in {}",
+            loaded_blob.schema_version,
+            target_path.display()
+        );
+        error!("{}", err);
+        last_save_error.0 = Some(err);
+        return;
+    }
+
+    for entity in &blob_entities {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    next_id.0 = apply_loaded_blob_to_world(
+        &mut commands,
+        &loaded_blob,
+        &mut active_blob,
+        &mut blob_render_settings,
+        request.spawn_near_portal_id,
+    )
+    .saturating_add(1)
+    .max(1);
+
+    last_save_error.0 = None;
+    info!("Loaded blob {}", request.target_save_file);
+}
+
 fn save_current_blob_state(
     save_config: &SaveConfig,
     active_blob: &ActiveWindowBlob,
     blob_render_settings: &BlobRenderSettings,
     tanks: &Query<(&PersistentEntityId, &Transform, &TankStats, &FactionId), With<Tank>>,
     projectiles: &Query<(&PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    portals: &Query<(&PersistentEntityId, &Transform, &Portal)>,
 ) -> Result<(), String> {
-    let save_file = build_blob_save_file(active_blob, blob_render_settings, tanks, projectiles);
+    let save_file =
+        build_blob_save_file(active_blob, blob_render_settings, tanks, projectiles, portals);
     let save_path = save_config.save_path_for(&active_blob.save_file);
     save_blob_to_disk(&save_path, &save_file)
+}
+
+fn apply_loaded_blob_to_world(
+    commands: &mut Commands,
+    loaded_blob: &BlobSaveFileV1,
+    active_blob: &mut ActiveWindowBlob,
+    blob_render_settings: &mut BlobRenderSettings,
+    spawn_near_portal_id: Option<u64>,
+) -> u64 {
+    active_blob.save_file = loaded_blob.blob.save_file.clone();
+    active_blob.size_bm = Vec2::new(loaded_blob.blob.size_bm[0], loaded_blob.blob.size_bm[1]);
+    blob_render_settings.pixels_per_bm = loaded_blob.blob.pixels_per_bm;
+
+    let spawn_position_override = spawn_near_portal_id.and_then(|portal_id| {
+        loaded_blob
+            .portals
+            .iter()
+            .find(|portal| portal.id == portal_id)
+            .map(|portal| Vec2::new(portal.position_bm[0], portal.position_bm[1]) + Vec2::X * 1.1)
+    });
+
+    let mut max_id: u64 = 0;
+    let mut relocated_player = false;
+
+    for tank in &loaded_blob.tanks {
+        max_id = max_id.max(tank.id);
+
+        let mut position = Vec2::new(tank.position_bm[0], tank.position_bm[1]);
+        if !relocated_player && tank.faction_id == PLAYER_FACTION_ID {
+            if let Some(spawn_position) = spawn_position_override {
+                position = spawn_position;
+                relocated_player = true;
+            }
+        }
+
+        commands.spawn((
+            PersistentEntityId(tank.id),
+            Tank,
+            FactionId(tank.faction_id),
+            TankStats {
+                hp: tank.hp,
+                move_speed: tank.move_speed,
+                turn_speed: tank.turn_speed,
+            },
+            SpatialBundle::from_transform(Transform {
+                translation: Vec3::new(position.x, position.y, 0.0),
+                rotation: Quat::from_rotation_z(tank.rotation_rad),
+                ..default()
+            }),
+        ));
+    }
+
+    if loaded_blob.tanks.is_empty() {
+        if let Some(spawn_position) = spawn_position_override {
+            let tank_id = max_id.saturating_add(1).max(1);
+            max_id = max_id.max(tank_id);
+            commands.spawn((
+                PersistentEntityId(tank_id),
+                Tank,
+                FactionId(PLAYER_FACTION_ID),
+                TankStats::default(),
+                SpatialBundle::from_transform(Transform::from_xyz(
+                    spawn_position.x,
+                    spawn_position.y,
+                    0.0,
+                )),
+            ));
+        }
+    }
+
+    for projectile in &loaded_blob.projectiles {
+        max_id = max_id.max(projectile.id);
+        commands.spawn((
+            PersistentEntityId(projectile.id),
+            Projectile,
+            BaseProjectile {
+                speed: projectile.speed,
+                remaining_distance: projectile.remaining_distance,
+                damage: projectile.damage,
+                radius: projectile.radius,
+                direction: Vec2::new(projectile.direction[0], projectile.direction[1]),
+                target_faction_id: projectile.target_faction_id,
+            },
+            SpatialBundle::from_transform(Transform::from_xyz(
+                projectile.position_bm[0],
+                projectile.position_bm[1],
+                4.0,
+            )),
+        ));
+    }
+
+    for portal in &loaded_blob.portals {
+        max_id = max_id.max(portal.id);
+        commands.spawn((
+            PersistentEntityId(portal.id),
+            Portal {
+                target_blob_save_file: portal.target_blob_save_file.clone(),
+                target_portal_id: portal.target_portal_id,
+                radius_bm: portal.radius_bm,
+            },
+            SpatialBundle::from_transform(Transform::from_xyz(
+                portal.position_bm[0],
+                portal.position_bm[1],
+                0.0,
+            )),
+        ));
+    }
+
+    max_id
 }
 
 fn build_blob_save_file(
@@ -334,6 +515,7 @@ fn build_blob_save_file(
     blob_render_settings: &BlobRenderSettings,
     tanks: &Query<(&PersistentEntityId, &Transform, &TankStats, &FactionId), With<Tank>>,
     projectiles: &Query<(&PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    portals: &Query<(&PersistentEntityId, &Transform, &Portal)>,
 ) -> BlobSaveFileV1 {
     let mut saved_tanks = Vec::new();
     for (id, transform, stats, faction) in tanks.iter() {
@@ -365,6 +547,18 @@ fn build_blob_save_file(
     }
     saved_projectiles.sort_by_key(|projectile| projectile.id);
 
+    let mut saved_portals = Vec::new();
+    for (id, transform, portal) in portals.iter() {
+        saved_portals.push(PortalSaveV1 {
+            id: id.0,
+            position_bm: [transform.translation.x, transform.translation.y],
+            target_blob_save_file: portal.target_blob_save_file.clone(),
+            target_portal_id: portal.target_portal_id,
+            radius_bm: portal.radius_bm,
+        });
+    }
+    saved_portals.sort_by_key(|portal| portal.id);
+
     BlobSaveFileV1 {
         schema_version: SAVE_SCHEMA_VERSION,
         blob: BlobMetaV1 {
@@ -374,6 +568,7 @@ fn build_blob_save_file(
         },
         tanks: saved_tanks,
         projectiles: saved_projectiles,
+        portals: saved_portals,
     }
 }
 

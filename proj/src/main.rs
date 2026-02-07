@@ -2,6 +2,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{ExitCondition, PresentMode, PrimaryWindow};
 mod projectile;
+mod portal;
 mod save;
 mod tank;
 mod windowblob;
@@ -32,6 +33,7 @@ fn main() {
         })
         .add_plugins(windowblob::WindowBlobPlugin)
         .add_plugins(save::SavePlugin)
+        .add_plugins(portal::PortalPlugin)
         .add_plugins(tank::TankPlugin)
         .add_plugins(projectile::ProjectilePlugin)
         .add_systems(Startup, setup_camera)
