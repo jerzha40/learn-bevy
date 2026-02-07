@@ -8,7 +8,20 @@
     ],
     "pixels_per_bm": 72.0
   },
-  "tanks": [],
+  "tanks": [
+    {
+      "id": 2066,
+      "position_bm": [
+        4.1,
+        0.0
+      ],
+      "rotation_rad": -0.0,
+      "hp": 100.0,
+      "move_speed": 2.4,
+      "turn_speed": 3.2,
+      "faction_id": 1
+    }
+  ],
   "projectiles": [],
   "portals": [
     {

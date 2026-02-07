@@ -329,6 +329,7 @@ fn handle_open_blob_window_requests(
     mut next_blob_instance_id: ResMut<NextBlobInstanceId>,
     mut next_id: ResMut<NextPersistentEntityId>,
     blob_windows: Query<(Entity, &BlobWindow)>,
+    mut windows: Query<&mut Window>,
     tanks: Query<
         (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
         With<Tank>,
@@ -351,6 +352,44 @@ fn handle_open_blob_window_requests(
             continue;
         };
 
+        let existing_target_window = blob_windows
+            .iter()
+            .find(|(_, window)| window.save_file == request.target_save_file)
+            .map(|(entity, window)| (entity, window.clone()));
+
+        let mut loaded_blob: Option<BlobSaveFileV1> = None;
+        if existing_target_window.is_none() {
+            let target_path = save_config.save_path_for(&request.target_save_file);
+            if !target_path.exists() {
+                let err = format!("target blob save {} does not exist", target_path.display());
+                error!("{}", err);
+                last_save_error.0 = Some(err);
+                continue;
+            }
+
+            let parsed_blob = match load_blob_from_disk(&target_path) {
+                Ok(loaded) => loaded,
+                Err(err) => {
+                    error!("Failed to load target blob {}: {}", target_path.display(), err);
+                    last_save_error.0 = Some(err);
+                    continue;
+                }
+            };
+
+            if parsed_blob.schema_version != SAVE_SCHEMA_VERSION {
+                let err = format!(
+                    "unsupported schema_version {} in {}",
+                    parsed_blob.schema_version,
+                    target_path.display()
+                );
+                error!("{}", err);
+                last_save_error.0 = Some(err);
+                continue;
+            }
+
+            loaded_blob = Some(parsed_blob);
+        }
+
         if let Err(err) = save_blob_instance_to_disk(
             &save_config,
             source_blob_window,
@@ -368,33 +407,40 @@ fn handle_open_blob_window_requests(
             commands.entity(source_tank_entity).despawn_recursive();
         }
 
-        let target_path = save_config.save_path_for(&request.target_save_file);
-        if !target_path.exists() {
-            let err = format!("target blob save {} does not exist", target_path.display());
-            error!("{}", err);
-            last_save_error.0 = Some(err);
+        if let Some((target_window_entity, target_window_blob)) = existing_target_window {
+            if let Some(traveler_tank) = request.traveler_tank {
+                let traveler_id = move_or_spawn_traveler_tank_in_open_blob(
+                    &mut commands,
+                    target_window_blob.instance_id,
+                    request.spawn_near_portal_id,
+                    traveler_tank,
+                    &mut next_id,
+                    &tanks,
+                    &portals,
+                );
+                next_id.0 = next_id.0.max(traveler_id.saturating_add(1).max(1));
+            }
+
+            if let Ok(mut target_window) = windows.get_mut(target_window_entity) {
+                target_window.visible = true;
+                target_window.set_minimized(false);
+                target_window.focused = true;
+            }
+
+            last_save_error.0 = None;
+            info!("Reused open blob window for {}", request.target_save_file);
             continue;
         }
 
-        let loaded_blob = match load_blob_from_disk(&target_path) {
-            Ok(loaded) => loaded,
-            Err(err) => {
-                error!("Failed to load target blob {}: {}", target_path.display(), err);
-                last_save_error.0 = Some(err);
-                continue;
-            }
-        };
-
-        if loaded_blob.schema_version != SAVE_SCHEMA_VERSION {
+        let Some(loaded_blob) = loaded_blob else {
             let err = format!(
-                "unsupported schema_version {} in {}",
-                loaded_blob.schema_version,
-                target_path.display()
+                "target blob {} load state missing unexpectedly",
+                request.target_save_file
             );
             error!("{}", err);
             last_save_error.0 = Some(err);
             continue;
-        }
+        };
 
         let blob_instance_id = next_blob_instance_id.0;
         next_blob_instance_id.0 = next_blob_instance_id.0.saturating_add(1);
@@ -501,6 +547,86 @@ fn save_on_window_close_requested(
     if successful_closes > 0 && successful_closes >= open_window_count {
         app_exit.send(AppExit::Success);
     }
+}
+
+fn move_or_spawn_traveler_tank_in_open_blob(
+    commands: &mut Commands,
+    target_blob_instance_id: u32,
+    spawn_near_portal_id: Option<u64>,
+    traveler_tank: TravelerTankState,
+    next_id: &mut ResMut<NextPersistentEntityId>,
+    tanks: &Query<
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        With<Tank>,
+    >,
+    portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+) -> u64 {
+    let target_position = resolve_spawn_position_for_blob(
+        target_blob_instance_id,
+        spawn_near_portal_id,
+        portals,
+    )
+    .unwrap_or(Vec2::new(
+        traveler_tank.position_bm[0],
+        traveler_tank.position_bm[1],
+    ));
+
+    if let Some((existing_tank_entity, _, existing_tank_id, _, _, _)) = tanks.iter().find(
+        |(_, tank_blob, _, _, _, tank_faction)| {
+            tank_blob.0 == target_blob_instance_id && tank_faction.0 == traveler_tank.faction_id
+        },
+    ) {
+        commands.entity(existing_tank_entity).insert((
+            TankStats {
+                hp: traveler_tank.hp,
+                move_speed: traveler_tank.move_speed,
+                turn_speed: traveler_tank.turn_speed,
+            },
+            Transform {
+                translation: Vec3::new(target_position.x, target_position.y, 0.0),
+                rotation: Quat::from_rotation_z(traveler_tank.rotation_rad),
+                ..default()
+            },
+        ));
+        return existing_tank_id.0;
+    }
+
+    let traveler_id = next_id.0;
+    next_id.0 = next_id.0.saturating_add(1).max(1);
+
+    commands.spawn((
+        PersistentEntityId(traveler_id),
+        BlobInstanceId(target_blob_instance_id),
+        BlobRenderLayer(blob_render_layer(target_blob_instance_id)),
+        Tank,
+        FactionId(traveler_tank.faction_id),
+        TankStats {
+            hp: traveler_tank.hp,
+            move_speed: traveler_tank.move_speed,
+            turn_speed: traveler_tank.turn_speed,
+        },
+        SpatialBundle::from_transform(Transform {
+            translation: Vec3::new(target_position.x, target_position.y, 0.0),
+            rotation: Quat::from_rotation_z(traveler_tank.rotation_rad),
+            ..default()
+        }),
+    ));
+
+    traveler_id
+}
+
+fn resolve_spawn_position_for_blob(
+    target_blob_instance_id: u32,
+    spawn_near_portal_id: Option<u64>,
+    portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+) -> Option<Vec2> {
+    let portal_id = spawn_near_portal_id?;
+    portals
+        .iter()
+        .find(|(blob_instance, persistent_id, _, _)| {
+            blob_instance.0 == target_blob_instance_id && persistent_id.0 == portal_id
+        })
+        .map(|(_, _, portal_transform, _)| portal_transform.translation.truncate() + Vec2::X * 1.1)
 }
 
 fn spawn_camera_for_blob_window(commands: &mut Commands, window_entity: Entity, blob_instance_id: u32) {
