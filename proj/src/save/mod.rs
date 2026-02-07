@@ -13,13 +13,14 @@ use crate::inventory::{
     DEFAULT_INVENTORY_HEIGHT, DEFAULT_INVENTORY_WIDTH, Inventory, InventoryAvatarStack,
 };
 use crate::item::{BaseItem, DrillData, Item, OreData};
-use crate::portal::{Portal, DEFAULT_PORTAL_COLOR_RGBA, DEFAULT_PORTAL_INTERACT_DIAMETER_BM};
-use crate::projectile::baseprojectile::BaseProjectile;
+use crate::portal::{DEFAULT_PORTAL_COLOR_RGBA, DEFAULT_PORTAL_INTERACT_DIAMETER_BM, Portal};
 use crate::projectile::Projectile;
-use crate::tank::{FactionId, Tank, TankStats, PLAYER_FACTION_ID};
+use crate::projectile::baseprojectile::BaseProjectile;
+use crate::tank::{FactionId, PLAYER_FACTION_ID, Tank, TankStats};
 use crate::windowblob::{
-    blob_render_layer, BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow, NextBlobInstanceId,
-    WindowBlobPrefab, WindowBlobWindowBundle, MAIN_BLOB_INSTANCE_ID, MAIN_BLOB_SAVE_FILE,
+    BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow, MAIN_BLOB_INSTANCE_ID,
+    MAIN_BLOB_SAVE_FILE, NextBlobInstanceId, WindowBlobPrefab, WindowBlobWindowBundle,
+    blob_render_layer,
 };
 
 pub const SAVE_SCHEMA_VERSION: u32 = 1;
@@ -47,13 +48,19 @@ impl Plugin for SavePlugin {
             .init_resource::<LastSaveError>()
             .add_systems(PreStartup, load_main_blob_or_bootstrap)
             .add_systems(Update, assign_persistent_ids)
-            .add_systems(Update, perform_initial_save_if_pending.after(assign_persistent_ids))
+            .add_systems(
+                Update,
+                perform_initial_save_if_pending.after(assign_persistent_ids),
+            )
             .add_systems(Update, autosave_blob_state.after(assign_persistent_ids))
             .add_systems(
                 Update,
                 handle_open_blob_window_requests.after(assign_persistent_ids),
             )
-            .add_systems(Update, save_on_window_close_requested.after(assign_persistent_ids));
+            .add_systems(
+                Update,
+                save_on_window_close_requested.after(assign_persistent_ids),
+            );
     }
 }
 
@@ -280,13 +287,12 @@ fn load_main_blob_or_bootstrap(
     };
     commands
         .entity(primary_window_entity)
-        .insert(BlobWindow::from_prefab(MAIN_BLOB_INSTANCE_ID, &main_blob_prefab));
+        .insert(BlobWindow::from_prefab(
+            MAIN_BLOB_INSTANCE_ID,
+            &main_blob_prefab,
+        ));
 
-    spawn_camera_for_blob_window(
-        &mut commands,
-        primary_window_entity,
-        MAIN_BLOB_INSTANCE_ID,
-    );
+    spawn_camera_for_blob_window(&mut commands, primary_window_entity, MAIN_BLOB_INSTANCE_ID);
 
     let max_id = spawn_blob_entities(
         &mut commands,
@@ -371,10 +377,26 @@ fn perform_initial_save_if_pending(
     save_config: Res<SaveConfig>,
     blob_windows: Query<&BlobWindow>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
+        (
+            Entity,
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &TankStats,
+            &FactionId,
+            &Inventory,
+        ),
         With<Tank>,
     >,
-    projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    projectiles: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseProjectile,
+        ),
+        With<Projectile>,
+    >,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
     items: Query<
         (
@@ -419,10 +441,26 @@ fn autosave_blob_state(
     save_config: Res<SaveConfig>,
     blob_windows: Query<&BlobWindow>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
+        (
+            Entity,
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &TankStats,
+            &FactionId,
+            &Inventory,
+        ),
         With<Tank>,
     >,
-    projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    projectiles: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseProjectile,
+        ),
+        With<Projectile>,
+    >,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
     items: Query<
         (
@@ -468,10 +506,26 @@ fn handle_open_blob_window_requests(
     blob_windows: Query<(Entity, &BlobWindow)>,
     mut windows: Query<&mut Window>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
+        (
+            Entity,
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &TankStats,
+            &FactionId,
+            &Inventory,
+        ),
         With<Tank>,
     >,
-    projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    projectiles: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseProjectile,
+        ),
+        With<Projectile>,
+    >,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
     items: Query<
         (
@@ -518,7 +572,11 @@ fn handle_open_blob_window_requests(
             let parsed_blob = match load_blob_from_disk(&target_path) {
                 Ok(loaded) => loaded,
                 Err(err) => {
-                    error!("Failed to load target blob {}: {}", target_path.display(), err);
+                    error!(
+                        "Failed to load target blob {}: {}",
+                        target_path.display(),
+                        err
+                    );
                     last_save_error.0 = Some(err);
                     continue;
                 }
@@ -600,7 +658,10 @@ fn handle_open_blob_window_requests(
             pixels_per_bm: loaded_blob.blob.pixels_per_bm,
         };
         let window_entity = commands
-            .spawn(WindowBlobWindowBundle::from_prefab(blob_instance_id, &blob_prefab))
+            .spawn(WindowBlobWindowBundle::from_prefab(
+                blob_instance_id,
+                &blob_prefab,
+            ))
             .id();
 
         spawn_camera_for_blob_window(&mut commands, window_entity, blob_instance_id);
@@ -628,14 +689,33 @@ fn save_on_window_close_requested(
     blob_cameras: Query<(Entity, &BlobCamera)>,
     blob_entities: Query<
         Entity,
-        (With<BlobInstanceId>, Or<(With<Tank>, With<Projectile>, With<Portal>, With<Item>)>),
+        (
+            With<BlobInstanceId>,
+            Or<(With<Tank>, With<Projectile>, With<Portal>, With<Item>)>,
+        ),
     >,
     blob_entity_instances: Query<&BlobInstanceId>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
+        (
+            Entity,
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &TankStats,
+            &FactionId,
+            &Inventory,
+        ),
         With<Tank>,
     >,
-    projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    projectiles: Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseProjectile,
+        ),
+        With<Projectile>,
+    >,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
     items: Query<
         (
@@ -707,26 +787,33 @@ fn move_or_spawn_traveler_tank_in_open_blob(
     traveler_tank: TravelerTankState,
     next_id: &mut ResMut<NextPersistentEntityId>,
     tanks: &Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
+        (
+            Entity,
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &TankStats,
+            &FactionId,
+            &Inventory,
+        ),
         With<Tank>,
     >,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
 ) -> u64 {
-    let target_position = resolve_spawn_position_for_blob(
-        target_blob_instance_id,
-        spawn_near_portal_id,
-        portals,
-    )
-    .unwrap_or(Vec2::new(
-        traveler_tank.position_bm[0],
-        traveler_tank.position_bm[1],
-    ));
+    let target_position =
+        resolve_spawn_position_for_blob(target_blob_instance_id, spawn_near_portal_id, portals)
+            .unwrap_or(Vec2::new(
+                traveler_tank.position_bm[0],
+                traveler_tank.position_bm[1],
+            ));
 
-    if let Some((existing_tank_entity, _, existing_tank_id, _, _, _, _)) = tanks.iter().find(
-        |(_, tank_blob, _, _, _, tank_faction, _)| {
-            tank_blob.0 == target_blob_instance_id && tank_faction.0 == traveler_tank.faction_id
-        },
-    ) {
+    if let Some((existing_tank_entity, _, existing_tank_id, _, _, _, _)) =
+        tanks
+            .iter()
+            .find(|(_, tank_blob, _, _, _, tank_faction, _)| {
+                tank_blob.0 == target_blob_instance_id && tank_faction.0 == traveler_tank.faction_id
+            })
+    {
         commands.entity(existing_tank_entity).insert((
             TankStats {
                 hp: traveler_tank.hp,
@@ -782,7 +869,11 @@ fn resolve_spawn_position_for_blob(
         .map(|(_, _, portal_transform, _)| portal_transform.translation.truncate() + Vec2::X * 1.1)
 }
 
-fn spawn_camera_for_blob_window(commands: &mut Commands, window_entity: Entity, blob_instance_id: u32) {
+fn spawn_camera_for_blob_window(
+    commands: &mut Commands,
+    window_entity: Entity,
+    blob_instance_id: u32,
+) {
     let render_layer = blob_render_layer(blob_instance_id);
 
     commands.spawn((
@@ -868,8 +959,8 @@ fn spawn_blob_entities(
 
     if let Some(traveler) = traveler_tank.as_ref() {
         if !traveler_placed {
-            let position =
-                spawn_position_override.unwrap_or(Vec2::new(traveler.position_bm[0], traveler.position_bm[1]));
+            let position = spawn_position_override
+                .unwrap_or(Vec2::new(traveler.position_bm[0], traveler.position_bm[1]));
             let tank_id = max_id.saturating_add(1).max(1);
             max_id = max_id.max(tank_id);
 
@@ -995,7 +1086,10 @@ fn inventory_from_save_data(saved_inventory: &InventorySaveV1) -> Inventory {
             color_rgba: saved_stack.color_rgba,
         });
         if let Err(err) = inventory.try_set_slot(index, slot_value) {
-            warn!("Dropping invalid inventory slot {} while loading save: {}", index, err);
+            warn!(
+                "Dropping invalid inventory slot {} while loading save: {}",
+                index, err
+            );
         }
     }
 
@@ -1041,10 +1135,26 @@ fn save_all_open_blobs(
     save_config: &SaveConfig,
     blob_windows: &Query<&BlobWindow>,
     tanks: &Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
+        (
+            Entity,
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &TankStats,
+            &FactionId,
+            &Inventory,
+        ),
         With<Tank>,
     >,
-    projectiles: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    projectiles: &Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseProjectile,
+        ),
+        With<Projectile>,
+    >,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
     items: &Query<
         (
@@ -1077,10 +1187,26 @@ fn save_blob_instance_to_disk(
     save_config: &SaveConfig,
     blob_window: &BlobWindow,
     tanks: &Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
+        (
+            Entity,
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &TankStats,
+            &FactionId,
+            &Inventory,
+        ),
         With<Tank>,
     >,
-    projectiles: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
+    projectiles: &Query<
+        (
+            &BlobInstanceId,
+            &PersistentEntityId,
+            &Transform,
+            &BaseProjectile,
+        ),
+        With<Projectile>,
+    >,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
     items: &Query<
         (
@@ -1195,8 +1321,8 @@ fn save_blob_instance_to_disk(
 }
 
 pub(crate) fn load_blob_from_disk(path: &Path) -> Result<BlobSaveFileV1, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|err| format!("read {} failed: {err}", path.display()))?;
+    let content =
+        fs::read_to_string(path).map_err(|err| format!("read {} failed: {err}", path.display()))?;
     serde_json::from_str::<BlobSaveFileV1>(&content)
         .map_err(|err| format!("parse {} failed: {err}", path.display()))
 }

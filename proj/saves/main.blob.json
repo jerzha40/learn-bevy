@@ -8,71 +8,7 @@
     ],
     "pixels_per_bm": 72.0
   },
-  "tanks": [
-    {
-      "id": 2003,
-      "position_bm": [
-        4.1,
-        0.0
-      ],
-      "rotation_rad": -0.0,
-      "hp": 100.0,
-      "move_speed": 2.4,
-      "turn_speed": 3.2,
-      "faction_id": 1,
-      "inventory": {
-        "width": 9,
-        "height": 4,
-        "slots": [
-          {
-            "item_archetype_id": "factory/drill/iron",
-            "quantity": 1,
-            "color_rgba": [
-              0.96,
-              0.68,
-              0.18,
-              1.0
-            ]
-          },
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          null
-        ]
-      }
-    }
-  ],
+  "tanks": [],
   "projectiles": [],
   "portals": [
     {
@@ -116,6 +52,27 @@
         ],
         "mining_speed_per_second": 1.0
       }
+    },
+    {
+      "id": 2004,
+      "position_bm": [
+        -2.4,
+        1.2
+      ],
+      "radius_bm": 0.26,
+      "color_rgba": [
+        0.7,
+        0.7,
+        0.76,
+        1.0
+      ],
+      "base_kind": "natural",
+      "sub_kind": "ore",
+      "ore_data": {
+        "ore_kind": "iron",
+        "yield_per_second": 1.0
+      },
+      "drill_data": null
     }
   ]
 }

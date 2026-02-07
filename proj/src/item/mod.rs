@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
-use crate::windowblob::{BlobInstanceId, BlobRenderLayer};
+use crate::windowblob::{blob_render_layer, BlobInstanceId, BlobRenderLayer, MAIN_BLOB_INSTANCE_ID};
 
 pub const BASE_KIND_NATURAL: &str = "natural";
 pub const BASE_KIND_FACTORY: &str = "factory";
@@ -12,12 +12,16 @@ pub const SUB_KIND_DRILL: &str = "drill";
 pub const DEFAULT_ITEM_RADIUS_BM: f32 = 0.22;
 pub const DEFAULT_ORE_YIELD_PER_SECOND: f32 = 1.0;
 pub const DEFAULT_DRILL_MINING_SPEED_PER_SECOND: f32 = 1.0;
+pub const DEFAULT_MAIN_ORE_KIND: &str = "iron";
+pub const DEFAULT_MAIN_ORE_POSITION_BM: Vec2 = Vec2::new(-2.4, 1.2);
+pub const DEFAULT_MAIN_ORE_COLOR_RGBA: [f32; 4] = [0.7, 0.7, 0.76, 1.0];
 
 pub struct ItemPlugin;
 
 impl Plugin for ItemPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, assemble_item_visuals);
+        app.add_systems(Startup, spawn_default_main_blob_ore_if_missing)
+            .add_systems(Update, assemble_item_visuals);
     }
 }
 
@@ -65,6 +69,44 @@ pub struct ItemBundle {
     pub blob_instance: BlobInstanceId,
     pub blob_render_layer: BlobRenderLayer,
     pub spatial: SpatialBundle,
+}
+
+fn spawn_default_main_blob_ore_if_missing(
+    mut commands: Commands,
+    existing_items: Query<(&BlobInstanceId, &BaseItem), With<Item>>,
+) {
+    let main_has_ore = existing_items.iter().any(|(blob_instance, base_item)| {
+        blob_instance.0 == MAIN_BLOB_INSTANCE_ID
+            && base_item.base_kind == BASE_KIND_NATURAL
+            && base_item.sub_kind == SUB_KIND_ORE
+    });
+
+    if main_has_ore {
+        return;
+    }
+
+    commands.spawn((
+        ItemBundle {
+            item: Item,
+            base_item: BaseItem {
+                radius_bm: default_item_radius_for_archetype("natural/ore/iron"),
+                color_rgba: DEFAULT_MAIN_ORE_COLOR_RGBA,
+                base_kind: BASE_KIND_NATURAL.to_string(),
+                sub_kind: SUB_KIND_ORE.to_string(),
+            },
+            blob_instance: BlobInstanceId(MAIN_BLOB_INSTANCE_ID),
+            blob_render_layer: BlobRenderLayer(blob_render_layer(MAIN_BLOB_INSTANCE_ID)),
+            spatial: SpatialBundle::from_transform(Transform::from_xyz(
+                DEFAULT_MAIN_ORE_POSITION_BM.x,
+                DEFAULT_MAIN_ORE_POSITION_BM.y,
+                0.2,
+            )),
+        },
+        OreData {
+            ore_kind: DEFAULT_MAIN_ORE_KIND.to_string(),
+            yield_per_second: DEFAULT_ORE_YIELD_PER_SECOND,
+        },
+    ));
 }
 
 pub fn base_kind_from_archetype(item_archetype_id: &str) -> &str {
