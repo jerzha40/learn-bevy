@@ -1,6 +1,7 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{PresentMode, PrimaryWindow};
+mod projectile;
 mod tank;
 
 const BASE_WINDOW_TITLE: &str = "Tank Test Window";
@@ -18,6 +19,7 @@ fn main() {
         }))
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_plugins(tank::TankPlugin)
+        .add_plugins(projectile::ProjectilePlugin)
         .add_systems(Startup, setup_camera)
         .add_systems(Update, update_window_title_with_fps)
         .run();
