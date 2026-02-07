@@ -2,13 +2,17 @@ use std::path::{Path, PathBuf};
 use std::{ffi::OsString, fs};
 
 use bevy::app::AppExit;
-use bevy::log::{error, info};
+use bevy::log::{error, info, warn};
 use bevy::prelude::*;
 use bevy::render::camera::RenderTarget;
 use bevy::render::view::RenderLayers;
 use bevy::window::{PrimaryWindow, WindowCloseRequested, WindowRef};
 use serde::{Deserialize, Serialize};
 
+use crate::inventory::{
+    DEFAULT_INVENTORY_HEIGHT, DEFAULT_INVENTORY_WIDTH, Inventory, InventoryAvatarStack,
+};
+use crate::item::{BaseItem, Item, OreData};
 use crate::portal::{Portal, DEFAULT_PORTAL_COLOR_RGBA, DEFAULT_PORTAL_INTERACT_DIAMETER_BM};
 use crate::projectile::baseprojectile::BaseProjectile;
 use crate::projectile::Projectile;
@@ -53,7 +57,7 @@ impl Plugin for SavePlugin {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TravelerTankState {
     pub position_bm: [f32; 2],
     pub rotation_rad: f32,
@@ -61,6 +65,7 @@ pub struct TravelerTankState {
     pub move_speed: f32,
     pub turn_speed: f32,
     pub faction_id: u8,
+    pub inventory: Inventory,
 }
 
 #[derive(Event, Debug, Clone)]
@@ -131,6 +136,8 @@ pub struct BlobSaveFileV1 {
     pub projectiles: Vec<ProjectileSaveV1>,
     #[serde(default)]
     pub portals: Vec<PortalSaveV1>,
+    #[serde(default)]
+    pub items: Vec<ItemSaveV1>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -149,6 +156,8 @@ pub struct TankSaveV1 {
     pub move_speed: f32,
     pub turn_speed: f32,
     pub faction_id: u8,
+    #[serde(default)]
+    pub inventory: InventorySaveV1,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -174,6 +183,59 @@ pub struct PortalSaveV1 {
     pub interact_diameter_bm: f32,
     #[serde(default = "default_portal_color_rgba")]
     pub color_rgba: [f32; 4],
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InventorySaveV1 {
+    #[serde(default = "default_inventory_width")]
+    pub width: u16,
+    #[serde(default = "default_inventory_height")]
+    pub height: u16,
+    #[serde(default)]
+    pub slots: Vec<Option<InventoryAvatarSaveV1>>,
+}
+
+impl Default for InventorySaveV1 {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_INVENTORY_WIDTH,
+            height: DEFAULT_INVENTORY_HEIGHT,
+            slots: Vec::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InventoryAvatarSaveV1 {
+    pub item_archetype_id: String,
+    pub quantity: u32,
+    pub color_rgba: [f32; 4],
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ItemSaveV1 {
+    pub id: u64,
+    pub position_bm: [f32; 2],
+    pub radius_bm: f32,
+    pub color_rgba: [f32; 4],
+    pub base_kind: String,
+    pub sub_kind: String,
+    #[serde(default)]
+    pub ore_data: Option<OreDataSaveV1>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct OreDataSaveV1 {
+    pub ore_kind: String,
+    pub yield_per_second: f32,
+}
+
+fn default_inventory_width() -> u16 {
+    DEFAULT_INVENTORY_WIDTH
+}
+
+fn default_inventory_height() -> u16 {
+    DEFAULT_INVENTORY_HEIGHT
 }
 
 fn default_portal_interact_diameter_bm() -> f32 {
@@ -270,6 +332,7 @@ fn load_main_blob_save_or_default(save_config: &SaveConfig) -> (BlobSaveFileV1, 
             tanks: Vec::new(),
             projectiles: Vec::new(),
             portals: Vec::new(),
+            items: Vec::new(),
         },
         true,
     )
@@ -283,7 +346,7 @@ fn assign_persistent_ids(
         (
             Without<PersistentEntityId>,
             With<BlobInstanceId>,
-            Or<(With<Tank>, With<Projectile>, With<Portal>)>,
+            Or<(With<Tank>, With<Projectile>, With<Portal>, With<Item>)>,
         ),
     >,
 ) {
@@ -299,18 +362,26 @@ fn perform_initial_save_if_pending(
     save_config: Res<SaveConfig>,
     blob_windows: Query<&BlobWindow>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
         With<Tank>,
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     if !initial_save_pending.0 {
         return;
     }
 
-    match save_all_open_blobs(&save_config, &blob_windows, &tanks, &projectiles, &portals) {
+    match save_all_open_blobs(
+        &save_config,
+        &blob_windows,
+        &tanks,
+        &projectiles,
+        &portals,
+        &items,
+    ) {
         Ok(()) => {
             initial_save_pending.0 = false;
             last_save_error.0 = None;
@@ -329,18 +400,26 @@ fn autosave_blob_state(
     save_config: Res<SaveConfig>,
     blob_windows: Query<&BlobWindow>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
         With<Tank>,
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     if !autosave_timer.0.tick(time.delta()).just_finished() {
         return;
     }
 
-    match save_all_open_blobs(&save_config, &blob_windows, &tanks, &projectiles, &portals) {
+    match save_all_open_blobs(
+        &save_config,
+        &blob_windows,
+        &tanks,
+        &projectiles,
+        &portals,
+        &items,
+    ) {
         Ok(()) => {
             last_save_error.0 = None;
         }
@@ -360,11 +439,12 @@ fn handle_open_blob_window_requests(
     blob_windows: Query<(Entity, &BlobWindow)>,
     mut windows: Query<&mut Window>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
         With<Tank>,
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     for request in open_blob_window_requests.read() {
@@ -425,6 +505,7 @@ fn handle_open_blob_window_requests(
             &tanks,
             &projectiles,
             &portals,
+            &items,
             request.source_tank_entity,
         ) {
             error!("Failed to save source blob before transfer: {}", err);
@@ -437,7 +518,7 @@ fn handle_open_blob_window_requests(
         }
 
         if let Some((target_window_entity, target_window_blob)) = existing_target_window {
-            if let Some(traveler_tank) = request.traveler_tank {
+            if let Some(traveler_tank) = request.traveler_tank.clone() {
                 let traveler_id = move_or_spawn_traveler_tank_in_open_blob(
                     &mut commands,
                     target_window_blob.instance_id,
@@ -490,7 +571,7 @@ fn handle_open_blob_window_requests(
             blob_instance_id,
             &loaded_blob,
             request.spawn_near_portal_id,
-            request.traveler_tank,
+            request.traveler_tank.clone(),
         );
         next_id.0 = next_id.0.max(max_id.saturating_add(1).max(1));
 
@@ -506,14 +587,18 @@ fn save_on_window_close_requested(
     save_config: Res<SaveConfig>,
     blob_windows: Query<(Entity, &BlobWindow)>,
     blob_cameras: Query<(Entity, &BlobCamera)>,
-    blob_entities: Query<Entity, (With<BlobInstanceId>, Or<(With<Tank>, With<Projectile>, With<Portal>)>)>,
+    blob_entities: Query<
+        Entity,
+        (With<BlobInstanceId>, Or<(With<Tank>, With<Projectile>, With<Portal>, With<Item>)>),
+    >,
     blob_entity_instances: Query<&BlobInstanceId>,
     tanks: Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
         With<Tank>,
     >,
     projectiles: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+    items: Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
     mut last_save_error: ResMut<LastSaveError>,
 ) {
     let mut successful_closes = 0usize;
@@ -533,6 +618,7 @@ fn save_on_window_close_requested(
             &tanks,
             &projectiles,
             &portals,
+            &items,
             None,
         ) {
             error!("Save on close failed. Blocking close: {}", err);
@@ -572,7 +658,7 @@ fn move_or_spawn_traveler_tank_in_open_blob(
     traveler_tank: TravelerTankState,
     next_id: &mut ResMut<NextPersistentEntityId>,
     tanks: &Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
         With<Tank>,
     >,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
@@ -587,8 +673,8 @@ fn move_or_spawn_traveler_tank_in_open_blob(
         traveler_tank.position_bm[1],
     ));
 
-    if let Some((existing_tank_entity, _, existing_tank_id, _, _, _)) = tanks.iter().find(
-        |(_, tank_blob, _, _, _, tank_faction)| {
+    if let Some((existing_tank_entity, _, existing_tank_id, _, _, _, _)) = tanks.iter().find(
+        |(_, tank_blob, _, _, _, tank_faction, _)| {
             tank_blob.0 == target_blob_instance_id && tank_faction.0 == traveler_tank.faction_id
         },
     ) {
@@ -603,6 +689,7 @@ fn move_or_spawn_traveler_tank_in_open_blob(
                 rotation: Quat::from_rotation_z(traveler_tank.rotation_rad),
                 ..default()
             },
+            traveler_tank.inventory.clone(),
         ));
         return existing_tank_id.0;
     }
@@ -621,6 +708,7 @@ fn move_or_spawn_traveler_tank_in_open_blob(
             move_speed: traveler_tank.move_speed,
             turn_speed: traveler_tank.turn_speed,
         },
+        traveler_tank.inventory.clone(),
         SpatialBundle::from_transform(Transform {
             translation: Vec3::new(target_position.x, target_position.y, 0.0),
             rotation: Quat::from_rotation_z(traveler_tank.rotation_rad),
@@ -693,9 +781,10 @@ fn spawn_blob_entities(
         let mut move_speed = tank.move_speed;
         let mut turn_speed = tank.turn_speed;
         let mut faction_id = tank.faction_id;
+        let mut inventory = inventory_from_save_data(&tank.inventory);
 
         if !traveler_placed && tank.faction_id == PLAYER_FACTION_ID {
-            if let Some(traveler) = traveler_tank {
+            if let Some(traveler) = traveler_tank.as_ref() {
                 position = spawn_position_override
                     .unwrap_or(Vec2::new(traveler.position_bm[0], traveler.position_bm[1]));
                 rotation_rad = traveler.rotation_rad;
@@ -703,6 +792,7 @@ fn spawn_blob_entities(
                 move_speed = traveler.move_speed;
                 turn_speed = traveler.turn_speed;
                 faction_id = traveler.faction_id;
+                inventory = traveler.inventory.clone();
                 traveler_placed = true;
             }
         }
@@ -718,6 +808,7 @@ fn spawn_blob_entities(
                 move_speed,
                 turn_speed,
             },
+            inventory,
             SpatialBundle::from_transform(Transform {
                 translation: Vec3::new(position.x, position.y, 0.0),
                 rotation: Quat::from_rotation_z(rotation_rad),
@@ -726,7 +817,7 @@ fn spawn_blob_entities(
         ));
     }
 
-    if let Some(traveler) = traveler_tank {
+    if let Some(traveler) = traveler_tank.as_ref() {
         if !traveler_placed {
             let position =
                 spawn_position_override.unwrap_or(Vec2::new(traveler.position_bm[0], traveler.position_bm[1]));
@@ -744,6 +835,7 @@ fn spawn_blob_entities(
                     move_speed: traveler.move_speed,
                     turn_speed: traveler.turn_speed,
                 },
+                traveler.inventory.clone(),
                 SpatialBundle::from_transform(Transform {
                     translation: Vec3::new(position.x, position.y, 0.0),
                     rotation: Quat::from_rotation_z(traveler.rotation_rad),
@@ -797,18 +889,109 @@ fn spawn_blob_entities(
         ));
     }
 
+    for item in &loaded_blob.items {
+        max_id = max_id.max(item.id);
+
+        let item_entity = commands
+            .spawn((
+                PersistentEntityId(item.id),
+                blob_instance,
+                blob_layer,
+                Item,
+                BaseItem {
+                    radius_bm: item.radius_bm,
+                    color_rgba: item.color_rgba,
+                    base_kind: item.base_kind.clone(),
+                    sub_kind: item.sub_kind.clone(),
+                },
+                SpatialBundle::from_transform(Transform::from_xyz(
+                    item.position_bm[0],
+                    item.position_bm[1],
+                    0.2,
+                )),
+            ))
+            .id();
+
+        if let Some(ore_data) = &item.ore_data {
+            commands.entity(item_entity).insert(OreData {
+                ore_kind: ore_data.ore_kind.clone(),
+                yield_per_second: ore_data.yield_per_second,
+            });
+        }
+    }
+
     max_id
+}
+
+fn inventory_from_save_data(saved_inventory: &InventorySaveV1) -> Inventory {
+    let width = saved_inventory.width.max(1);
+    let height = saved_inventory.height.max(1);
+    let mut inventory = Inventory::new(width, height);
+
+    for (index, maybe_slot) in saved_inventory
+        .slots
+        .iter()
+        .take(inventory.slot_count())
+        .enumerate()
+    {
+        let slot_value = maybe_slot.as_ref().map(|saved_stack| InventoryAvatarStack {
+            item_archetype_id: saved_stack.item_archetype_id.clone(),
+            quantity: saved_stack.quantity,
+            color_rgba: saved_stack.color_rgba,
+        });
+        if let Err(err) = inventory.try_set_slot(index, slot_value) {
+            warn!("Dropping invalid inventory slot {} while loading save: {}", index, err);
+        }
+    }
+
+    let removed = inventory.sanitize_disallowed_stacks();
+    if removed > 0 {
+        warn!(
+            "Dropped {} disallowed inventory stacks while loading save",
+            removed
+        );
+    }
+
+    inventory
+}
+
+fn inventory_save_from_component(inventory: &Inventory) -> InventorySaveV1 {
+    let slots = inventory
+        .slots
+        .0
+        .iter()
+        .map(|slot| {
+            slot.as_ref().and_then(|stack| {
+                if stack.quantity == 0 || !stack.is_allowed_in_inventory() {
+                    return None;
+                }
+
+                Some(InventoryAvatarSaveV1 {
+                    item_archetype_id: stack.item_archetype_id.clone(),
+                    quantity: stack.quantity,
+                    color_rgba: stack.color_rgba,
+                })
+            })
+        })
+        .collect();
+
+    InventorySaveV1 {
+        width: inventory.meta.width,
+        height: inventory.meta.height,
+        slots,
+    }
 }
 
 fn save_all_open_blobs(
     save_config: &SaveConfig,
     blob_windows: &Query<&BlobWindow>,
     tanks: &Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
         With<Tank>,
     >,
     projectiles: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+    items: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
 ) -> Result<(), String> {
     for blob_window in blob_windows.iter() {
         save_blob_instance_to_disk(
@@ -817,6 +1000,7 @@ fn save_all_open_blobs(
             tanks,
             projectiles,
             portals,
+            items,
             None,
         )?;
     }
@@ -828,15 +1012,16 @@ fn save_blob_instance_to_disk(
     save_config: &SaveConfig,
     blob_window: &BlobWindow,
     tanks: &Query<
-        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId),
+        (Entity, &BlobInstanceId, &PersistentEntityId, &Transform, &TankStats, &FactionId, &Inventory),
         With<Tank>,
     >,
     projectiles: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseProjectile), With<Projectile>>,
     portals: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &Portal)>,
+    items: &Query<(&BlobInstanceId, &PersistentEntityId, &Transform, &BaseItem, Option<&OreData>), With<Item>>,
     skip_tank_entity: Option<Entity>,
 ) -> Result<(), String> {
     let mut saved_tanks = Vec::new();
-    for (entity, tank_blob, id, transform, stats, faction) in tanks.iter() {
+    for (entity, tank_blob, id, transform, stats, faction, inventory) in tanks.iter() {
         if tank_blob.0 != blob_window.instance_id || Some(entity) == skip_tank_entity {
             continue;
         }
@@ -850,6 +1035,7 @@ fn save_blob_instance_to_disk(
             move_speed: stats.move_speed,
             turn_speed: stats.turn_speed,
             faction_id: faction.0,
+            inventory: inventory_save_from_component(inventory),
         });
     }
     saved_tanks.sort_by_key(|tank| tank.id);
@@ -891,6 +1077,27 @@ fn save_blob_instance_to_disk(
     }
     saved_portals.sort_by_key(|portal| portal.id);
 
+    let mut saved_items = Vec::new();
+    for (item_blob, id, transform, base_item, ore_data) in items.iter() {
+        if item_blob.0 != blob_window.instance_id {
+            continue;
+        }
+
+        saved_items.push(ItemSaveV1 {
+            id: id.0,
+            position_bm: [transform.translation.x, transform.translation.y],
+            radius_bm: base_item.radius_bm,
+            color_rgba: base_item.color_rgba,
+            base_kind: base_item.base_kind.clone(),
+            sub_kind: base_item.sub_kind.clone(),
+            ore_data: ore_data.map(|ore| OreDataSaveV1 {
+                ore_kind: ore.ore_kind.clone(),
+                yield_per_second: ore.yield_per_second,
+            }),
+        });
+    }
+    saved_items.sort_by_key(|item| item.id);
+
     let save_file = BlobSaveFileV1 {
         schema_version: SAVE_SCHEMA_VERSION,
         blob: BlobMetaV1 {
@@ -901,6 +1108,7 @@ fn save_blob_instance_to_disk(
         tanks: saved_tanks,
         projectiles: saved_projectiles,
         portals: saved_portals,
+        items: saved_items,
     };
 
     let save_path = save_config.save_path_for(&blob_window.save_file);

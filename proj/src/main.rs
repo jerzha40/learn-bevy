@@ -1,6 +1,10 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{ExitCondition, PresentMode};
+mod inventory;
+#[path = "inventoryAvatars/mod.rs"]
+mod inventory_avatars;
+mod item;
 mod projectile;
 mod portal;
 mod save;
@@ -27,8 +31,11 @@ fn main() {
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_plugins(windowblob::WindowBlobPlugin)
         .add_plugins(save::SavePlugin)
-        .add_plugins(portal::PortalPlugin)
+        .add_plugins(item::ItemPlugin)
         .add_plugins(tank::TankPlugin)
+        .add_plugins(inventory::InventoryPlugin)
+        .add_plugins(inventory_avatars::InventoryAvatarsPlugin)
+        .add_plugins(portal::PortalPlugin)
         .add_plugins(projectile::ProjectilePlugin)
         .add_systems(Update, update_window_title_with_fps)
         .run();

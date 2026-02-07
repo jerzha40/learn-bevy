@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
+use crate::inventory::{OpenInventoryState, SelectedAvatarForPlacement};
 use crate::projectile::Projectile;
 use crate::tank::{
     FactionId, Tank, TankStats, TankTurretVisual, TANK_BODY_RADIUS_BM, TANK_TURRET_BARREL_LENGTH_BM,
@@ -65,9 +66,15 @@ pub struct BaseProjectileBundle {
 fn fire_base_projectile(
     mouse_button: Res<ButtonInput<MouseButton>>,
     focused_blob: Res<FocusedBlobInstance>,
+    open_inventory_state: Res<OpenInventoryState>,
+    selected_avatar: Res<SelectedAvatarForPlacement>,
     mut commands: Commands,
     turrets: Query<(&GlobalTransform, &BlobInstanceId, &BlobRenderLayer), With<TankTurretVisual>>,
 ) {
+    if open_inventory_state.is_open() || selected_avatar.is_active_preview() {
+        return;
+    }
+
     let Some(focused_blob_id) = focused_blob.0 else {
         return;
     };

@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
+use crate::inventory::Inventory;
 use crate::windowblob::{
     blob_render_layer, BlobCamera, BlobInstanceId, BlobRenderLayer, BlobWindow,
     FocusedBlobInstance, MAIN_BLOB_INSTANCE_ID,
@@ -76,6 +77,7 @@ pub struct TankBundle {
     pub tank: Tank,
     pub faction: FactionId,
     pub stats: TankStats,
+    pub inventory: Inventory,
     pub blob_instance: BlobInstanceId,
     pub blob_render_layer: BlobRenderLayer,
     pub spatial: SpatialBundle,

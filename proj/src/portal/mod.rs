@@ -4,6 +4,8 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy::sprite::MaterialMesh2dBundle;
 
+use crate::inventory::Inventory;
+use crate::inventory::{OpenInventoryState, SelectedAvatarForPlacement};
 use crate::save::{
     load_blob_from_disk, save_blob_to_disk, BlobMetaV1, BlobSaveFileV1, OpenBlobWindowRequest,
     PersistentEntityId, PortalSaveV1, SaveConfig, TravelerTankState, SAVE_SCHEMA_VERSION,
@@ -241,15 +243,21 @@ fn update_portal_hover_visuals(
 
 fn activate_hovered_portal(
     mouse_button: Res<ButtonInput<MouseButton>>,
+    open_inventory_state: Res<OpenInventoryState>,
+    selected_avatar: Res<SelectedAvatarForPlacement>,
     blob_windows: Query<&BlobWindow>,
     hovered_portals: Query<(&Portal, &Transform, &BlobInstanceId), (With<PortalHovered>, Without<Tank>)>,
     all_portals: Query<(&PersistentEntityId, &Portal, &Transform, &BlobInstanceId), (With<Portal>, Without<Tank>)>,
     mut tanks: ParamSet<(
-        Query<(Entity, &Transform, &TankStats, &FactionId, &BlobInstanceId), With<Tank>>,
+        Query<(Entity, &Transform, &TankStats, &FactionId, &BlobInstanceId, &Inventory), With<Tank>>,
         Query<&mut Transform, With<Tank>>,
     )>,
     mut open_blob_window_requests: EventWriter<OpenBlobWindowRequest>,
 ) {
+    if open_inventory_state.is_open() || selected_avatar.is_active_preview() {
+        return;
+    }
+
     if !mouse_button.just_pressed(MouseButton::Left) {
         return;
     }
@@ -269,7 +277,7 @@ fn activate_hovered_portal(
     let activation_radius = hovered_portal.interact_diameter_bm * 0.5;
     let mut selected_tank: Option<(Entity, TravelerTankState)> = None;
 
-    for (tank_entity, tank_transform, tank_stats, tank_faction, tank_blob) in tanks.p0().iter() {
+    for (tank_entity, tank_transform, tank_stats, tank_faction, tank_blob, tank_inventory) in tanks.p0().iter() {
         if tank_blob.0 != portal_blob.0 {
             continue;
         }
@@ -289,6 +297,7 @@ fn activate_hovered_portal(
                 move_speed: tank_stats.move_speed,
                 turn_speed: tank_stats.turn_speed,
                 faction_id: tank_faction.0,
+                inventory: tank_inventory.clone(),
             },
         ));
         break;
@@ -383,6 +392,7 @@ fn ensure_target_portal_exists(
             tanks: Vec::new(),
             projectiles: Vec::new(),
             portals: Vec::new(),
+            items: Vec::new(),
         }
     };
 

@@ -10,16 +10,58 @@
   },
   "tanks": [
     {
-      "id": 2178,
+      "id": 2183,
       "position_bm": [
-        4.1,
+        2.5516167,
         0.0
       ],
       "rotation_rad": -0.0,
       "hp": 100.0,
       "move_speed": 2.4,
       "turn_speed": 3.2,
-      "faction_id": 1
+      "faction_id": 1,
+      "inventory": {
+        "width": 9,
+        "height": 4,
+        "slots": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      }
     }
   ],
   "projectiles": [],
@@ -41,5 +83,6 @@
         1.0
       ]
     }
-  ]
+  ],
+  "items": []
 }
