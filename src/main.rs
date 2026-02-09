@@ -33,7 +33,12 @@ struct Velocity(Vec2);
 fn setup_world_texture(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
     let w = 64;
     let h = 64;
-
+    let pixel: [u8; 16] = [
+        1, 0, 0, 0, // R = 1u32 (小端)
+        2, 0, 0, 0, // G = 2u32
+        3, 0, 0, 0, // B = 3u32
+        4, 0, 0, 0, // A = 4u32
+    ];
     // RGBA32Uint: 每像素 16 bytes（4 * u32）
     // 用全 0 初始化：pixel = 16 个 0 字节
     let mut image = Image::new_fill(
@@ -43,7 +48,7 @@ fn setup_world_texture(mut images: ResMut<Assets<Image>>, mut commands: Commands
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &[0u8; 16],
+        &pixel,
         TextureFormat::Rgba32Uint,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
