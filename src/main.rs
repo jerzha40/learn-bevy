@@ -1,23 +1,21 @@
 use bevy::prelude::{
-    App, Assets, Camera2d, Color, Commands, Component, DefaultPlugins, Handle, Image, Query, Res,
-    ResMut, Resource, Sprite, Startup, Time, Transform, Update, Vec2, Window, With, default, error,
-    info, warn,
+    App, Assets, Camera2d, Color, Commands, Component, DefaultPlugins, Image, Query, Res, ResMut,
+    Sprite, Startup, Time, Transform, Update, Vec2, Window, With, default, error, info, warn,
 };
 
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
-use bevy_asset::RenderAssetUsages;
+use bevy::render::render_resource::TextureFormat;
 
 use bevy::input::ButtonInput;
 use bevy::input::keyboard::KeyCode;
 use std::fs;
 
-#[derive(Resource, Clone)]
-struct WorldTex(pub Handle<Image>);
+use worldio::{WorldTex, setup_world_texture};
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         // Startup：只跑一次，通常用来“创建场景/初始化实体”
-        .add_systems(Startup, (setup, setup_world_texture))
+        .add_systems(Startup, (setup, setup_world))
         // Update：每帧跑，通常用来“更新逻辑”
         .add_systems(Update, (move_player, bounce_in_window, save_world_on_s))
         .run();
@@ -30,37 +28,8 @@ struct Player;
 #[derive(Component)]
 struct Velocity(Vec2);
 
-fn setup_world_texture(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
-    let w = 64;
-    let h = 64;
-    let pixel: [u8; 16] = [
-        1, 0, 0, 0, // R = 1u32 (小端)
-        2, 0, 0, 0, // G = 2u32
-        3, 0, 0, 0, // B = 3u32
-        4, 0, 0, 0, // A = 4u32
-    ];
-    // RGBA32Uint: 每像素 16 bytes（4 * u32）
-    // 用全 0 初始化：pixel = 16 个 0 字节
-    let mut image = Image::new_fill(
-        Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &pixel,
-        TextureFormat::Rgba32Uint,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-
-    // 关键：让它能当 storage texture 给 compute 用
-    image.texture_descriptor.usage = TextureUsages::COPY_DST
-        | TextureUsages::COPY_SRC
-        | TextureUsages::STORAGE_BINDING
-        | TextureUsages::TEXTURE_BINDING;
-
-    let handle = images.add(image);
-    commands.insert_resource(WorldTex(handle));
+fn setup_world(images: ResMut<Assets<Image>>, commands: Commands) {
+    setup_world_texture(images, commands);
 }
 
 fn setup(mut commands: Commands) {
