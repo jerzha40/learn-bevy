@@ -1876,6 +1876,7 @@ name = "conway"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_asset",
 ]
 
 [[package]]
