@@ -1,15 +1,12 @@
 use bevy::prelude::{
     App, Assets, Camera2d, Color, Commands, Component, DefaultPlugins, Image, Query, Res, ResMut,
-    Sprite, Startup, Time, Transform, Update, Vec2, Window, With, default, error, info, warn,
+    Sprite, Startup, Time, Transform, Update, Vec2, Window, With, default,
 };
-
-use bevy::render::render_resource::TextureFormat;
 
 use bevy::input::ButtonInput;
 use bevy::input::keyboard::KeyCode;
-use std::fs;
 
-use worldio::{WorldTex, setup_world_texture};
+use worldio::{WorldTex, create_rgba32u, save};
 
 fn main() {
     App::new()
@@ -29,7 +26,7 @@ struct Player;
 struct Velocity(Vec2);
 
 fn setup_world(images: ResMut<Assets<Image>>, commands: Commands) {
-    setup_world_texture(images, commands);
+    create_rgba32u(images, commands);
 }
 
 fn setup(mut commands: Commands) {
@@ -92,45 +89,5 @@ fn save_world_on_s(
     if !keys.just_pressed(KeyCode::KeyS) {
         return;
     }
-
-    let Some(world) = world else {
-        warn!("WorldTex 还没创建好");
-        return;
-    };
-
-    let Some(img) = images.get(&world.0) else {
-        warn!("Assets<Image> 里还拿不到 world image（可能还在准备中）");
-        return;
-    };
-
-    // 只允许我们预期的格式
-    if img.texture_descriptor.format != TextureFormat::Rgba32Uint {
-        warn!("格式不是 Rgba32Uint：{:?}", img.texture_descriptor.format);
-        return;
-    }
-
-    let w = img.texture_descriptor.size.width;
-    let h = img.texture_descriptor.size.height;
-
-    // img.data 是 Vec<u8>，里面按 RGBA32Uint 存：每像素 16 bytes
-    // 我们把它原样写入 bin（前面加一个小头部）
-    let mut out: Vec<u8> = Vec::new();
-    out.extend_from_slice(b"CWLD"); // magic
-    out.extend_from_slice(&1u32.to_le_bytes()); // version
-    out.extend_from_slice(&(w as u32).to_le_bytes());
-    out.extend_from_slice(&(h as u32).to_le_bytes());
-    out.extend_from_slice(&1u32.to_le_bytes()); // format_id: 1 = RGBA32Uint
-    let data = img
-        .data
-        .as_ref()
-        .expect("Image.data 为空：可能没有 CPU 侧数据可用");
-
-    out.extend_from_slice(data);
-
-    let path = "world.bin";
-    if let Err(e) = fs::write(path, out) {
-        error!("写入 {} 失败：{}", path, e);
-    } else {
-        info!("已保存 {}（{}x{} RGBA32Uint）", path, w, h);
-    }
+    save(world, images);
 }
