@@ -84,18 +84,19 @@ pub fn save(world: Option<Res<WorldTex>>, images: Res<Assets<Image>>) {
 
 #[cfg(test)]
 mod tests {
-    use bevy::prelude::{App, DefaultPlugins, Startup, Update};
+    use bevy::prelude::{App, Assets, Image, MinimalPlugins, Startup, Update};
 
     use crate::{create_rgba32u, save};
 
     #[test]
     fn it_works() {
-        let mut app = App::new()
-            .add_plugins(DefaultPlugins)
-            // Startup：只跑一次，通常用来“创建场景/初始化实体”
-            .add_systems(Startup, create_rgba32u)
-            // Update：每帧跑，通常用来“更新逻辑”
-            .add_systems(Update, save);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Assets<Image>>();
+        // Startup：只跑一次，通常用来“创建场景/初始化实体”
+        app.add_systems(Startup, create_rgba32u);
+        // Update：每帧跑，通常用来“更新逻辑”
+        app.add_systems(Update, save);
         app.world_mut().run_schedule(Startup);
         app.update();
     }
