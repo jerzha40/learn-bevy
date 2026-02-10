@@ -10,10 +10,10 @@ pub fn create_rgba32u(mut images: ResMut<Assets<Image>>, mut commands: Commands)
     let w = 64;
     let h = 64;
     let pixel: [u8; 16] = [
-        255, 255, 255, 255, // R = 1u32 (小端)
+        255, 255, 127, 255, // R = 1u32 (小端)
         0, 0, 0, 0, // G = 2u32
         0, 0, 0, 0, // B = 3u32
-        0, 0, 0, 0, // A = 4u32
+        255, 0, 0, 0, // A = 4u32
     ];
     // RGBA32Uint: 每像素 16 bytes（4 * u32）
     // 用全 0 初始化：pixel = 16 个 0 字节
@@ -150,6 +150,7 @@ pub enum VizMode {
     Binary,    // v==0 黑 else 白
     Normalize, // v/max 灰度
     HashColor, // id->hash color
+    Test,
 }
 
 // u32 -> RGBA8 buffer
@@ -164,6 +165,10 @@ pub fn visualize_rgba32u(world: &WorldBin, mode: VizMode) -> Vec<u8> {
     };
 
     for (i, px) in world.rgba32u.iter().enumerate() {
+        println!("i={i} px={:02X?}", px);
+        let bytes = px[0].to_le_bytes();
+        println!("i={i} v={} le_bytes={:02X?}", px[0], bytes[0]);
+
         let v = px[0]; // 主值：R 通道
         let (r, g, b) = match mode {
             VizMode::Binary => {
@@ -191,13 +196,18 @@ pub fn visualize_rgba32u(world: &WorldBin, mode: VizMode) -> Vec<u8> {
                 let b = ((x >> 16) & 0xFF) as u8;
                 (r, g, b)
             }
+            VizMode::Test => (255, 12, 12),
         };
+        let r = px[0].to_le_bytes()[0]; // 主值：R 通道
+        let g = px[1].to_le_bytes()[0]; // 主值：R 通道
+        let b = px[2].to_le_bytes()[0]; // 主值：R 通道
+        let a = px[3].to_le_bytes()[0]; // 主值：R 通道
 
         let o = i * 4;
         rgba8[o] = r;
         rgba8[o + 1] = g;
         rgba8[o + 2] = b;
-        rgba8[o + 3] = 255;
+        rgba8[o + 3] = a;
     }
 
     rgba8
@@ -244,6 +254,6 @@ mod tests {
         app.add_systems(Update, save);
         app.world_mut().run_schedule(Startup);
         app.update();
-        let _ = bin_to_png("./world.bin", "./world.png", VizMode::Normalize);
+        let _ = bin_to_png("./world.bin", "./world.png", VizMode::Test);
     }
 }
