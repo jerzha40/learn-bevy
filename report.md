@@ -65,10 +65,43 @@
 
 ### 3.1 架构概览
 
-#### 3.1.1 system
+本系统采用 **CPU 调度 + GPU 并行执行** 的总体架构设计。
 
-系统就是按照一定频率执行computeshader
+CPU 侧基于 Bevy 的 ECS 框架，负责系统调度、资源管理与渲染流程控制；  
+GPU 侧通过 Compute Shader 执行具体的世界状态更新逻辑。
 
-#### 3.1.1 component
+---
 
-组件就是数据对吧，那这个组件就是一个图片组件？
+#### 3.1.1 System 设计
+
+在 Bevy 中，**System 并不直接执行世界计算逻辑**，而是作为调度单元存在。
+
+本项目中的 System 主要职责包括：
+
+- 按固定频率（tick）触发世界更新
+- 向 Render Graph 提交 Compute Pass
+- 负责 Compute Shader 的调度顺序与依赖关系
+- 控制世界状态的双缓冲（Ping-Pong）交换
+
+具体的世界计算逻辑完全由 GPU Compute Shader 并行执行，  
+CPU 仅作为“调度者”，不参与单个网格单元的计算。
+
+---
+
+#### 3.1.2 Component 设计
+
+在传统 ECS 架构中，Component 通常表示实体的属性数据。  
+而在本项目中，Component 的作用发生了转变。
+
+本项目中的 Component 主要用于：
+
+- 持有 GPU 世界状态资源的引用
+- 管理 Storage Texture / Buffer 的生命周期
+- 为 System 提供对 GPU 数据的访问入口
+
+例如，整个网格世界并非由大量 CPU 实体组成，  
+而是以 **单个或少量 GPU Storage Texture** 的形式存在，  
+并通过 Component 的方式挂载到 Bevy 世界中。
+
+因此，Component 并不表示“世界中的一个格子”，  
+而是表示 **“一整张 GPU 世界状态数据的抽象句柄”**。
