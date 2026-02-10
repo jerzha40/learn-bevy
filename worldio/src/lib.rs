@@ -1,7 +1,7 @@
 use bevy::prelude::{Assets, Commands, Handle, Image, Res, ResMut, Resource, error, info, warn};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_asset::RenderAssetUsages;
-use std::fs;
+use std::{fs, io};
 
 #[derive(Resource, Clone)]
 pub struct WorldTex(pub Handle<Image>);
@@ -10,10 +10,10 @@ pub fn create_rgba32u(mut images: ResMut<Assets<Image>>, mut commands: Commands)
     let w = 64;
     let h = 64;
     let pixel: [u8; 16] = [
-        1, 0, 0, 0, // R = 1u32 (小端)
-        2, 0, 0, 0, // G = 2u32
-        3, 0, 0, 0, // B = 3u32
-        4, 0, 0, 0, // A = 4u32
+        255, 255, 255, 255, // R = 1u32 (小端)
+        0, 0, 0, 0, // G = 2u32
+        0, 0, 0, 0, // B = 3u32
+        0, 0, 0, 0, // A = 4u32
     ];
     // RGBA32Uint: 每像素 16 bytes（4 * u32）
     // 用全 0 初始化：pixel = 16 个 0 字节
@@ -82,11 +82,156 @@ pub fn save(world: Option<Res<WorldTex>>, images: Res<Assets<Image>>) {
     }
 }
 
+use std::path::Path;
+#[derive(Debug)]
+pub struct WorldBin {
+    pub w: u32,
+    pub h: u32,
+    pub rgba32u: Vec<[u32; 4]>, // 每像素 RGBA u32
+}
+
+// 读取 world.bin
+pub fn read_world_bin(path: impl AsRef<Path>) -> io::Result<WorldBin> {
+    let bytes = fs::read(path)?;
+
+    // 最小头部长度：4 + 4*4 = 20
+    if bytes.len() < 20 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "file too small"));
+    }
+
+    if &bytes[0..4] != b"CWLD" {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic"));
+    }
+
+    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let w = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let h = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+    let format_id = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+
+    if version != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported version",
+        ));
+    }
+    if format_id != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported format_id",
+        ));
+    }
+
+    let expected = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|n| n.checked_mul(16))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "size overflow"))?;
+
+    if bytes.len() != 20 + expected {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "size mismatch"));
+    }
+
+    let data = &bytes[20..];
+    let mut out = Vec::with_capacity((w as usize) * (h as usize));
+
+    for i in 0..(w as usize * h as usize) {
+        let base = i * 16;
+        let r = u32::from_le_bytes(data[base..base + 4].try_into().unwrap());
+        let g = u32::from_le_bytes(data[base + 4..base + 8].try_into().unwrap());
+        let b = u32::from_le_bytes(data[base + 8..base + 12].try_into().unwrap());
+        let a = u32::from_le_bytes(data[base + 12..base + 16].try_into().unwrap());
+        out.push([r, g, b, a]);
+    }
+
+    Ok(WorldBin { w, h, rgba32u: out })
+}
+
+// 可视化模式
+pub enum VizMode {
+    Binary,    // v==0 黑 else 白
+    Normalize, // v/max 灰度
+    HashColor, // id->hash color
+}
+
+// u32 -> RGBA8 buffer
+pub fn visualize_rgba32u(world: &WorldBin, mode: VizMode) -> Vec<u8> {
+    let mut rgba8 = vec![0u8; (world.w as usize) * (world.h as usize) * 4];
+
+    // 这里用 R 通道当“主值”，你也可以换成 G/B/A 或组合
+    let max_v = if matches!(mode, VizMode::Normalize) {
+        world.rgba32u.iter().map(|p| p[0]).max().unwrap_or(0)
+    } else {
+        0
+    };
+
+    for (i, px) in world.rgba32u.iter().enumerate() {
+        let v = px[0]; // 主值：R 通道
+        let (r, g, b) = match mode {
+            VizMode::Binary => {
+                if v == 0 {
+                    (0, 0, 0)
+                } else {
+                    (255, 255, 255)
+                }
+            }
+            VizMode::Normalize => {
+                if max_v == 0 {
+                    (0, 0, 0)
+                } else {
+                    let t = (v as f64) / (max_v as f64);
+                    let gray = (t * 255.0).clamp(0.0, 255.0) as u8;
+                    (gray, gray, gray)
+                }
+            }
+            VizMode::HashColor => {
+                // 一个简单稳定的 hash -> RGB（同 id 同色）
+                let mut x = v.wrapping_mul(0x9E3779B1);
+                x ^= x >> 16;
+                let r = (x & 0xFF) as u8;
+                let g = ((x >> 8) & 0xFF) as u8;
+                let b = ((x >> 16) & 0xFF) as u8;
+                (r, g, b)
+            }
+        };
+
+        let o = i * 4;
+        rgba8[o] = r;
+        rgba8[o + 1] = g;
+        rgba8[o + 2] = b;
+        rgba8[o + 3] = 255;
+    }
+
+    rgba8
+}
+// 写 png（需要 png crate）
+pub fn write_png_rgba8(path: impl AsRef<Path>, w: u32, h: u32, rgba8: &[u8]) -> io::Result<()> {
+    use std::fs::File;
+    use std::io::BufWriter;
+
+    let file = File::create(path)?;
+    let wtr = BufWriter::new(file);
+
+    let mut encoder = png::Encoder::new(wtr, w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(rgba8)?;
+    Ok(())
+}
+
+// 总入口：bin -> png
+pub fn bin_to_png(bin_path: &str, png_path: &str, mode: VizMode) -> io::Result<()> {
+    let world = read_world_bin(bin_path)?;
+    let rgba8 = visualize_rgba32u(&world, mode);
+    write_png_rgba8(png_path, world.w, world.h, &rgba8)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::prelude::{App, Assets, Image, MinimalPlugins, Startup, Update};
 
-    use crate::{create_rgba32u, save};
+    use crate::{VizMode, bin_to_png, create_rgba32u, save};
 
     #[test]
     fn it_works() {
@@ -99,5 +244,6 @@ mod tests {
         app.add_systems(Update, save);
         app.world_mut().run_schedule(Startup);
         app.update();
+        let _ = bin_to_png("./world.bin", "./world.png", VizMode::Normalize);
     }
 }
