@@ -105,3 +105,33 @@ CPU 仅作为“调度者”，不参与单个网格单元的计算。
 
 因此，Component 并不表示“世界中的一个格子”，  
 而是表示 **“一整张 GPU 世界状态数据的抽象句柄”**。
+
+### 3.2 字段设计
+
+W1：Building（建筑/占用信息）
+
+bits 0..15 : building_id（0 = none）
+
+bits 16..19 : b_rot（建筑朝向）
+
+bits 20..23 : b_size（1..16，或你自己定义）
+
+bits 24..31 : team_or_owner（0..255，单机先用 0）
+
+解释：Mindustry/Factorio 那类，建筑是动态层核心。你后面还能加“建筑根格/多格占用”规则。
+
+## 4. 功能手册
+
+### 4.1
+
+创建rgbau32 texture
+
+```rust
+worldio::create_rgba32u
+```
+
+create a resource type of
+
+```rust
+ResMut<Assets<Image>>
+```
