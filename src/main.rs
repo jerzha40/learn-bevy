@@ -10,11 +10,12 @@ use worldio::{WorldTex, create_rgba32u, save};
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins(WorldComputePlugin)
-        // Startup：只跑一次，通常用来“创建场景/初始化实体”
-        .add_systems(Startup, (setup, setup_world))
-        // Update：每帧跑，通常用来“更新逻辑”
+        .add_plugins((
+            DefaultPlugins,
+            WorldComputePlugin,
+            Material2dPlugin::<WorldDisplayMaterial>::default(),
+        ))
+        .add_systems(Startup, (setup, setup_world, setup_world_view).chain())
         .add_systems(Update, (move_player, bounce_in_window, save_world_on_s))
         .run();
 }
@@ -298,4 +299,58 @@ impl Node for WorldComputeNode {
 
         Ok(())
     }
+}
+use bevy::{
+    reflect::TypePath,
+    render::render_resource::{AsBindGroup, ShaderType},
+    shader::ShaderRef,
+    sprite_render::{Material2d, Material2dPlugin, MeshMaterial2d},
+};
+
+const WORLD_DISPLAY_SHADER: &str = "shaders/world_display.wgsl";
+
+#[derive(Clone, Copy, Debug, ShaderType)]
+struct WorldDisplayParams {
+    mode: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+struct WorldDisplayMaterial {
+    // 关键：sample_type = "u_int" 才能绑定 Uint 纹理
+    #[texture(0, sample_type = "u_int")]
+    world_tex: Handle<Image>,
+
+    #[uniform(1)]
+    params: WorldDisplayParams,
+}
+
+impl Material2d for WorldDisplayMaterial {
+    fn fragment_shader() -> ShaderRef {
+        WORLD_DISPLAY_SHADER.into()
+    }
+}
+
+fn setup_world_view(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<WorldDisplayMaterial>>,
+    world: Res<WorldTex>,
+) {
+    // 一个大矩形，把 world texture 显示出来（z=-1 放到玩家后面）
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::default())),
+        MeshMaterial2d(materials.add(WorldDisplayMaterial {
+            world_tex: world.0.clone(),
+            params: WorldDisplayParams {
+                mode: 0, // 0=RawBytes，最像你 worldio 当前的输出
+                _pad0: 0,
+                _pad1: 0,
+                _pad2: 0,
+            },
+        })),
+        Transform::from_translation(Vec3::new(0.0, 0.0, -1.0)).with_scale(Vec3::splat(600.0)),
+    ));
 }
