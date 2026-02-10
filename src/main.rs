@@ -11,6 +11,7 @@ use worldio::{WorldTex, create_rgba32u, save};
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(WorldComputePlugin)
         // Startup：只跑一次，通常用来“创建场景/初始化实体”
         .add_systems(Startup, (setup, setup_world))
         // Update：每帧跑，通常用来“更新逻辑”
@@ -90,4 +91,211 @@ fn save_world_on_s(
         return;
     }
     save(world, images);
+}
+// ---- compute shader plugin (Bevy 0.18) ----
+use std::borrow::Cow;
+
+use bevy::{
+    core_pipeline::core_2d::graph::{Core2d, Node2d},
+    prelude::*,
+    render::{
+        Render, RenderApp, RenderStartup, RenderSystems,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_asset::RenderAssets,
+        render_graph::{Node, NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel},
+        render_resource::{
+            binding_types::{texture_storage_2d, uniform_buffer},
+            *,
+        },
+        renderer::{RenderContext, RenderDevice, RenderQueue},
+        texture::GpuImage,
+    },
+};
+
+const WORLD_SHADER: &str = "shaders/world_compute.wgsl"; // assets/shaders/world_compute.wgsl
+const WORKGROUP_SIZE: u32 = 8;
+
+#[derive(Resource)]
+struct ComputeTimer(Timer);
+
+#[derive(Resource, Clone, Copy, ExtractResource, ShaderType)]
+struct WorldComputeUniforms {
+    tick: UVec4, // tick.x 每秒 +1
+}
+impl Default for WorldComputeUniforms {
+    fn default() -> Self {
+        Self { tick: UVec4::ZERO }
+    }
+}
+
+fn tick_compute_every_second(
+    time: Res<Time>,
+    mut timer: ResMut<ComputeTimer>,
+    mut u: ResMut<WorldComputeUniforms>,
+) {
+    timer.0.tick(time.delta());
+    if timer.0.just_finished() {
+        u.tick.x = u.tick.x.wrapping_add(1);
+        println!("sdf");
+    }
+}
+
+pub struct WorldComputePlugin;
+
+impl Plugin for WorldComputePlugin {
+    fn build(&self, app: &mut App) {
+        // 主世界：每秒更新 tick
+        app.insert_resource(ComputeTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
+            .init_resource::<WorldComputeUniforms>()
+            .add_systems(Update, tick_compute_every_second)
+            // 把资源抽到 RenderApp（RenderWorld）
+            .add_plugins((
+                ExtractResourcePlugin::<worldio::WorldTex>::default(),
+                ExtractResourcePlugin::<WorldComputeUniforms>::default(),
+            ));
+
+        let render_app = app.sub_app_mut(RenderApp);
+
+        // RenderWorld：建 pipeline + 每帧准备 bind group
+        render_app
+            .add_systems(RenderStartup, init_world_compute_pipeline)
+            .add_systems(
+                Render,
+                prepare_world_compute_bind_group.in_set(RenderSystems::PrepareBindGroups),
+            )
+            // 插入一个 RenderGraph Node：在 2D 主 pass 之前 dispatch
+            .add_render_graph_node::<WorldComputeNode>(Core2d, WorldComputeLabel)
+            .add_render_graph_edge(Core2d, WorldComputeLabel, Node2d::StartMainPass);
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+struct WorldComputeLabel;
+
+#[derive(Resource)]
+struct WorldComputePipeline {
+    layout: BindGroupLayoutDescriptor,
+    pipeline: CachedComputePipelineId,
+}
+
+fn init_world_compute_pipeline(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    pipeline_cache: Res<PipelineCache>,
+) {
+    let layout = BindGroupLayoutDescriptor::new(
+        "WorldComputeLayout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_2d(TextureFormat::Rgba32Uint, StorageTextureAccess::WriteOnly),
+                uniform_buffer::<WorldComputeUniforms>(false),
+            ),
+        ),
+    );
+
+    let shader = asset_server.load(WORLD_SHADER);
+    let pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        layout: vec![layout.clone()],
+        shader,
+        entry_point: Some(Cow::from("main")),
+        ..default()
+    });
+
+    commands.insert_resource(WorldComputePipeline { layout, pipeline });
+}
+
+#[derive(Resource)]
+struct WorldComputeBindGroup {
+    bind_group: BindGroup,
+    size: Extent3d,
+}
+
+fn prepare_world_compute_bind_group(
+    mut commands: Commands,
+    pipeline: Res<WorldComputePipeline>,
+    pipeline_cache: Res<PipelineCache>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    world_tex: Res<worldio::WorldTex>,
+    uniforms: Res<WorldComputeUniforms>,
+    render_device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    let Some(gpu_image) = gpu_images.get(&world_tex.0) else {
+        return; // 纹理还没在 GPU 侧准备好
+    };
+
+    // 注意：WorldComputeUniforms 我们让它 Copy 了，所以这里能直接 *uniforms
+    let mut uniform_buffer = UniformBuffer::from(*uniforms);
+    uniform_buffer.write_buffer(&render_device, &queue);
+
+    let bind_group = render_device.create_bind_group(
+        None,
+        &pipeline_cache.get_bind_group_layout(&pipeline.layout),
+        &BindGroupEntries::sequential((&gpu_image.texture_view, &uniform_buffer)),
+    );
+
+    commands.insert_resource(WorldComputeBindGroup {
+        bind_group,
+        size: gpu_image.size,
+    });
+}
+
+#[derive(Default)]
+struct WorldComputeNode {
+    last_tick: u32,
+    run_this_frame: bool,
+}
+
+impl Node for WorldComputeNode {
+    fn update(&mut self, world: &mut World) {
+        let Some(u) = world.get_resource::<WorldComputeUniforms>() else {
+            self.run_this_frame = false;
+            return;
+        };
+        let tick = u.tick.x;
+
+        self.run_this_frame = tick != self.last_tick;
+        if self.run_this_frame {
+            self.last_tick = tick;
+        }
+    }
+
+    fn run<'w>(
+        &self,
+        _graph: &mut RenderGraphContext<'_>,
+        render_context: &mut RenderContext<'w>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        if !self.run_this_frame {
+            return Ok(());
+        }
+
+        let Some(bg) = world.get_resource::<WorldComputeBindGroup>() else {
+            return Ok(());
+        };
+        let Some(pipeline) = world.get_resource::<WorldComputePipeline>() else {
+            return Ok(());
+        };
+        let Some(pipeline_cache) = world.get_resource::<PipelineCache>() else {
+            return Ok(());
+        };
+        let Some(p) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
+            return Ok(()); // pipeline 还在编译
+        };
+
+        let w = bg.size.width.max(1);
+        let h = bg.size.height.max(1);
+        let gx = (w + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+        let gy = (h + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+
+        let mut pass = render_context
+            .command_encoder()
+            .begin_compute_pass(&ComputePassDescriptor::default());
+        pass.set_pipeline(p);
+        pass.set_bind_group(0, &bg.bind_group, &[]);
+        pass.dispatch_workgroups(gx, gy, 1);
+
+        Ok(())
+    }
 }

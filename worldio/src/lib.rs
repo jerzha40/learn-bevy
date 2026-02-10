@@ -1,9 +1,10 @@
 use bevy::prelude::{Assets, Commands, Handle, Image, Res, ResMut, Resource, error, info, warn};
+use bevy::render::extract_resource::ExtractResource;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_asset::RenderAssetUsages;
 use std::{fs, io};
 
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, ExtractResource)]
 pub struct WorldTex(pub Handle<Image>);
 
 pub fn create_rgba32u(mut images: ResMut<Assets<Image>>, mut commands: Commands) {
