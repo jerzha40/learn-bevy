@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.18.0"
+bevy = { version = "0.18.0", features = ["android-game-activity"] }
 bevy_asset = "0.18.0"
 worldio = { path = "worldio" }
+
+[lib]
+name = "conway"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"

@@ -1,13 +1,1 @@
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+// root build.gradle: keep empty (settings.gradle manages repositories)

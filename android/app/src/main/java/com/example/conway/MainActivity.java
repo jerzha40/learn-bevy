@@ -1,6 +1,6 @@
 package com.example.conway;
 
-import androidx.games.activity.GameActivity;
+import com.google.androidgamesdk.GameActivity;
 
 public class MainActivity extends GameActivity {
     static {

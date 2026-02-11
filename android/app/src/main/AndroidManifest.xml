@@ -1,14 +1,25 @@
-<manifest package="com.example.conway"
-    xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.conway">
 
     <application
+        android:hasCode="true"
         android:label="Conway"
-        android:hasCode="true">
+        android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+        <meta-data
+            android:name="android.app.lib_name"
+            android:value="conway" />
+
+        <meta-data
+            android:name="android.allowNativeHeapPointerTagging"
+            android:value="false" />
 
         <activity
-            android:name="androidx.games.activity.GameActivity"
+            android:name="com.example.conway.MainActivity"
+            android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:screenOrientation="fullUser">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

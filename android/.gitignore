@@ -1,0 +1,9 @@
+.gradle/
+.idea/
+build/
+app/build/
+local.properties
+.gradle-user-home/
+.cargo-target/
+app/src/main/jniLibs/
+.gradle-wrapper/

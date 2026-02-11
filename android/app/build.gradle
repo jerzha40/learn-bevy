@@ -1,6 +1,26 @@
 plugins {
-    id 'com.android.application'
+    id 'com.android.application' version '9.0.0'
 }
+
+def rustProjectDir = file("${rootProject.projectDir}/..")
+def rustJniOutDir = file("${projectDir}/src/main/jniLibs")
+def rustAssetsSrcDir = file("${rustProjectDir}/assets")
+def rustAssetsOutDir = file("${buildDir}/generated/bevy-assets")
+def rustTargetDir = file("${rootProject.projectDir}/.cargo-target")
+
+def cargoFromEnv = System.getenv("CARGO")
+def cargoHome = System.getenv("CARGO_HOME")
+def cargoFromHome = cargoHome ? file("${cargoHome}/bin/cargo${System.getProperty("os.name").toLowerCase().contains("win") ? ".exe" : ""}") : null
+def cargoExecutable = cargoFromEnv ?: ((cargoFromHome != null && cargoFromHome.exists()) ? cargoFromHome.absolutePath : "cargo")
+
+def localProps = new Properties()
+def localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { localProps.load(it) }
+}
+def sdkDir = localProps.getProperty("sdk.dir")
+def ndkDirFromLocal = localProps.getProperty("ndk.dir")
+def ndkDirFromEnv = System.getenv("ANDROID_NDK_HOME") ?: System.getenv("NDK_HOME")
 
 android {
     namespace "com.example.conway"
@@ -12,7 +32,7 @@ android {
         targetSdk 34
 
         ndk {
-            abiFilters "arm64-v8a"
+            abiFilters "arm64-v8a", "x86_64"
         }
     }
 
@@ -21,8 +41,94 @@ android {
             minifyEnabled false
         }
     }
+
+    sourceSets {
+        main {
+            assets.srcDirs += rustAssetsOutDir
+        }
+    }
 }
 
 dependencies {
     implementation "androidx.games:games-activity:3.0.5"
+    implementation "androidx.core:core:1.13.1"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+}
+
+def configureRustExecTask = { Exec task, boolean releaseBuild ->
+    task.group = "rust"
+    task.description = releaseBuild ? "Build Rust library for Android release" : "Build Rust library for Android debug"
+    task.workingDir = rustProjectDir
+    task.environment "CARGO_TARGET_DIR", rustTargetDir.absolutePath
+
+    if (sdkDir != null && !sdkDir.isEmpty()) {
+        task.environment "ANDROID_HOME", sdkDir
+        task.environment "ANDROID_SDK_ROOT", sdkDir
+    }
+
+    task.onlyIf {
+        def hasArm64 = file("${rustJniOutDir}/arm64-v8a/libconway.so").exists()
+        def hasX64 = file("${rustJniOutDir}/x86_64/libconway.so").exists()
+        def hasAnyPrebuiltLib = hasArm64 || hasX64
+        def ndkConfigured = (ndkDirFromLocal != null && !ndkDirFromLocal.isEmpty()) ||
+            (ndkDirFromEnv != null && !ndkDirFromEnv.isEmpty())
+
+        if (!ndkConfigured && hasAnyPrebuiltLib) {
+            logger.lifecycle("Skip ${task.name}: NDK not configured, using prebuilt jniLibs")
+            return false
+        }
+        return true
+    }
+
+    task.doFirst {
+        def ndkDir = ndkDirFromLocal ?: ndkDirFromEnv
+        if (ndkDir != null && !ndkDir.isEmpty()) {
+            task.environment "ANDROID_NDK_HOME", ndkDir
+            task.environment "NDK_HOME", ndkDir
+        }
+    }
+
+    def args = [
+        "ndk",
+        "-t", "arm64-v8a",
+        "-t", "x86_64",
+        "-o", rustJniOutDir.absolutePath,
+        "build"
+    ]
+    if (releaseBuild) {
+        args.add("--release")
+    }
+
+    task.commandLine([cargoExecutable] + args)
+}
+
+tasks.register("buildRustDebug", Exec) {
+    configureRustExecTask(delegate as Exec, false)
+}
+
+tasks.register("buildRustRelease", Exec) {
+    configureRustExecTask(delegate as Exec, true)
+}
+
+tasks.register("syncGameAssets", Sync) {
+    group = "rust"
+    description = "Copy Bevy assets into Android app assets/"
+    from rustAssetsSrcDir
+    into rustAssetsOutDir
+}
+
+tasks.matching { it.name == "mergeDebugJniLibFolders" }.configureEach {
+    dependsOn tasks.named("buildRustDebug")
+}
+
+tasks.matching { it.name == "mergeReleaseJniLibFolders" }.configureEach {
+    dependsOn tasks.named("buildRustRelease")
+}
+
+tasks.matching { it.name == "mergeDebugAssets" }.configureEach {
+    dependsOn tasks.named("syncGameAssets")
+}
+
+tasks.matching { it.name == "mergeReleaseAssets" }.configureEach {
+    dependsOn tasks.named("syncGameAssets")
 }

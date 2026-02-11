@@ -8,16 +8,22 @@ use bevy::input::keyboard::KeyCode;
 
 use worldio::{WorldTex, create_rgba32u, save};
 
-fn main() {
-    App::new()
-        .add_plugins((
-            DefaultPlugins,
+pub fn run() {
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup)
+        .add_systems(Update, (move_player, bounce_in_window, save_world_on_s));
+
+    #[cfg(not(target_os = "android"))]
+    {
+        app.add_plugins((
             WorldComputePlugin,
             Material2dPlugin::<WorldDisplayMaterial>::default(),
         ))
-        .add_systems(Startup, (setup, setup_world, setup_world_view).chain())
-        .add_systems(Update, (move_player, bounce_in_window, save_world_on_s))
-        .run();
+        .add_systems(Startup, (setup_world, setup_world_view).chain());
+    }
+
+    app.run();
 }
 
 /// Component：挂在 Entity 上的数据（可以是“标签”或“属性”）
