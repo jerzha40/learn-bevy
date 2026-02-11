@@ -1,0 +1,28 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace "com.example.conway"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.conway"
+        minSdk 26
+        targetSdk 34
+
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    implementation "androidx.games:games-activity:3.0.5"
+}
